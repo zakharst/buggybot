@@ -15,7 +15,8 @@ buggybot/
 ├── config/
 │   ├── ado-bug-field-refs.defaults.json   # Default ref names for tabs / Reported from
 │   ├── ado-bug-required-field-refs.json   # alwaysRequired refs snapshot (OpenAI prompt)
-│   └── openai-bug-examples.json           # systemPromptExtra + backlog few-shot (optional)
+│   ├── openai-bug-examples.json           # systemPromptExtra + JSON few-shot (optional)
+│   └── openai-bug-backlog-examples.md     # long backlog paste → system prompt (optional)
 ├── drizzle.config.ts
 ├── drizzle/
 │   └── 0000_init.sql          # Copy of schema for reference / manual apply
@@ -193,11 +194,11 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 2. **`npm run ado:list-bug-fields`** — Prints **`alwaysRequired`** fields and a starter **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`** JSON (Area, Iteration, picklists).
 3. **`npm run ado:snapshot-required-field-refs`** — Refreshes **`config/ado-bug-required-field-refs.json`** bundled for the OpenAI intake prompt.
 
-**OpenAI — your real bugs as few-shot (bundled at build; no ADO call when users file from Slack):**
+**OpenAI — backlog style (no ADO call when users file from Slack):**
 
-1. Edit **`config/openai-bug-examples.json`** → **`systemPromptExtra`**: paste org-specific QA rules (tone, what to always capture, product names). Committed like code.
-2. **`npm run openai:snapshot-bug-examples`** — Pulls the **20** most recently changed Bugs (override count with **`OPENAI_BUG_EXAMPLES_COUNT`**), maps Title / Description / Repro Steps / System Info / Acceptance Criteria into `examples[]` for few-shot. Preserves existing **`systemPromptExtra`**. Re-run when you want fresher style anchors; **review before commit** if the repo is public (backlog text may be sensitive).
-3. If **`examples`** is empty, the app falls back to five built-in generic few-shot pairs in code.
+1. **`config/openai-bug-backlog-examples.md`** — Your pasted real bugs (markdown). Read at runtime and appended to the **system** prompt. On Vercel the file is included via **`outputFileTracingIncludes`** in `next.config.ts`. Optional path: **`OPENAI_BACKLOG_EXAMPLES_MD`**.
+2. **`config/openai-bug-examples.json`** → **`systemPromptExtra`**: short org rules. Optional **`examples`**, or **`npm run openai:snapshot-bug-examples`** ( **`OPENAI_BUG_EXAMPLES_COUNT`** ) to fill few-shot from ADO.
+3. If **`examples`** is empty, five built-in few-shot pairs in code are used.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -217,6 +218,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | Variable | Description |
 |----------|-------------|
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
+| `OPENAI_BACKLOG_EXAMPLES_MD` | Optional path (relative to cwd) to a markdown file of real bugs; default **`config/openai-bug-backlog-examples.md`**. |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
 | `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object** of field ref → value, applied on every create. **No WIQL or work-item fetch at create**—set this once in Vercel (or `.env`) and update when Area/Sprint/tags change. Keys for title, description, severity, and assignee are ignored. **Empty strings are dropped** (picklists reject them). **Discover fields:** `npm run ado:list-bug-fields`. |
 | `AZURE_DEVOPS_REPORTED_FROM` | Overrides the built-in default **`DT team`** for **`Custom.Reportedfrom`** on every Slack create (wins over `REQUIRED_FIELD_VALUES`). Must match the picklist exactly (see `ado:list-bug-fields`). |

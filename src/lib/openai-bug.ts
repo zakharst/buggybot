@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { z } from "zod";
@@ -88,6 +90,41 @@ type BugExamplesJson = {
 };
 
 const bugExamples = bugExamplesFile as BugExamplesJson;
+
+const DEFAULT_BACKLOG_MD = "config/openai-bug-backlog-examples.md";
+const BACKLOG_MD_MAX_CHARS = 120_000;
+let backlogMarkdownBlockCache: string | undefined;
+
+function backlogReferenceMarkdownBlock(): string {
+  if (backlogMarkdownBlockCache !== undefined) {
+    return backlogMarkdownBlockCache;
+  }
+  const rel =
+    process.env.OPENAI_BACKLOG_EXAMPLES_MD?.trim() || DEFAULT_BACKLOG_MD;
+  const abs = join(process.cwd(), rel);
+  if (!existsSync(abs)) {
+    backlogMarkdownBlockCache = "";
+    return "";
+  }
+  try {
+    const raw = readFileSync(abs, "utf8").trim();
+    if (!raw) {
+      backlogMarkdownBlockCache = "";
+      return "";
+    }
+    const clipped =
+      raw.length > BACKLOG_MD_MAX_CHARS
+        ? `${raw.slice(0, BACKLOG_MD_MAX_CHARS)}\n\n…(truncated)`
+        : raw;
+    backlogMarkdownBlockCache =
+      "\n\n## Reference — real bugs from our backlog (match QA phrasing, Env/Preconditions/Steps/Actual/Expected; STR/CASE/NOTE patterns when similar)\n\n" +
+      clipped;
+    return backlogMarkdownBlockCache;
+  } catch {
+    backlogMarkdownBlockCache = "";
+    return "";
+  }
+}
 
 function backlogFewShotMessages(): ChatCompletionMessageParam[] {
   const rows = bugExamples.examples ?? [];
@@ -252,6 +289,7 @@ export async function messageToBugJson(params: {
   const systemContent =
     SYSTEM_PROMPT +
     (extra ? `\n\n## Org-specific QA instructions (from config/openai-bug-examples.json)\n${extra}\n` : "") +
+    backlogReferenceMarkdownBlock() +
     adoConfiguredFieldsPromptBlock();
 
   const backlog = backlogFewShotMessages();
