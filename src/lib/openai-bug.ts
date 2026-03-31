@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
+import { listAzureDevOpsConfiguredFieldRefs } from "@/lib/azure-devops";
 
 /** QA-style Azure DevOps bug intake (strict JSON from model; description HTML built in app). */
 export const bugIntakeSchema = z.object({
@@ -77,6 +78,21 @@ Expected result guidance:
   - expected: page should open normally
 
 Output only valid JSON.`;
+
+function adoConfiguredFieldsPromptBlock(): string {
+  const refs = listAzureDevOpsConfiguredFieldRefs();
+  if (refs.length === 0) return "";
+  const lines = refs.map((r) => `- ${r}`).join("\n");
+  return `
+
+Azure DevOps — these work item field reference names are set on create from server configuration (env \`AZURE_DEVOPS_REQUIRED_FIELD_VALUES\`). They are not part of your JSON schema; the app applies them when filing the bug.
+${lines}
+
+Rules for intake:
+- Do not add these keys to your JSON output.
+- Do not invent AreaPath, IterationPath, tags, ValueArea, or custom process field values; the server applies the configured values on create. If the reporter disagrees with area/sprint/classification, record only their wording in environment or notes—do not emit ADO field names.
+- Keep title and structured fields focused on the defect; avoid repeating boilerplate that duplicates configured area/sprint/tags.`;
+}
 
 const EX1_USER = `Example 1
 Input:
@@ -191,7 +207,7 @@ export async function messageToBugJson(params: {
   const completion = await client.beta.chat.completions.parse({
     model: params.model,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: SYSTEM_PROMPT + adoConfiguredFieldsPromptBlock() },
       { role: "user", content: EX1_USER },
       { role: "assistant", content: EX1_ASSISTANT },
       { role: "user", content: EX2_USER },
