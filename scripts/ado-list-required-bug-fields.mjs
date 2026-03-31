@@ -205,7 +205,10 @@ async function main() {
   );
   console.log(`AZURE_DEVOPS_REQUIRED_FIELD_VALUES=${JSON.stringify(starter)}`);
   console.log(
-    "\nTip: set Custom.Reportedfrom to a value from the allowed list above (e.g. DT team).\n",
+    "\nTip: set Custom.Reportedfrom to a value from the allowed list above (e.g. DT team).",
+  );
+  console.log(
+    "Runtime: set AZURE_DEVOPS_TEMPLATE_TAG=production (or your tag) to copy Area/Iteration/Custom fields from the latest tagged Bug instead of maintaining this JSON.\n",
   );
 }
 
