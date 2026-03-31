@@ -41,8 +41,21 @@ const ADO_FIELDS_SET_BY_APP = new Set([
   "System.AssignedTo",
 ]);
 
+function isEmptyAdoFieldValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "string" && value.trim() === "") return true;
+  return false;
+}
+
+function dropEmptyAdoFieldValues(m: Record<string, unknown>) {
+  for (const k of Object.keys(m)) {
+    if (isEmptyAdoFieldValue(m[k])) delete m[k];
+  }
+}
+
 /**
  * Optional JSON object in env: field ref → value. Set once in Vercel (no WIQL, no file read at create).
+ * Empty strings are skipped — ADO picklists reject InvalidEmpty (TF401320).
  */
 function parseAzureDevOpsRequiredFieldValuesMap(
   raw: string | undefined,
@@ -56,7 +69,7 @@ function parseAzureDevOpsRequiredFieldValuesMap(
       if (typeof refName !== "string" || !refName.includes(".")) continue;
       if (refName.length > 256) continue;
       if (ADO_FIELDS_SET_BY_APP.has(refName)) continue;
-      if (value === undefined || value === null) continue;
+      if (isEmptyAdoFieldValue(value)) continue;
       out[refName] = value;
     }
     return out;
@@ -91,6 +104,7 @@ function parseAzureDevOpsCreateExtraPatch(
       if (o.op !== "add") continue;
       if (typeof o.path !== "string" || !o.path.startsWith("/fields/")) continue;
       if (!("value" in o)) continue;
+      if (isEmptyAdoFieldValue(o.value)) continue;
       out.push({ op: "add", path: o.path, value: o.value });
     }
     return out;
@@ -179,6 +193,21 @@ export async function createAzureBug(params: {
       process.env.AZURE_DEVOPS_REQUIRED_FIELD_VALUES,
     ),
   };
+  dropEmptyAdoFieldValues(mergedContext);
+
+  const reportedFromRef =
+    process.env.AZURE_DEVOPS_REPORTED_FROM_FIELD_REF?.trim() ||
+    "Custom.Reportedfrom";
+  const reportedFromDefault = process.env.AZURE_DEVOPS_REPORTED_FROM?.trim();
+  if (reportedFromDefault) {
+    if (
+      mergedContext[reportedFromRef] === undefined ||
+      isEmptyAdoFieldValue(mergedContext[reportedFromRef])
+    ) {
+      mergedContext[reportedFromRef] = reportedFromDefault;
+    }
+  }
+
   if (!("System.State" in mergedContext)) {
     mergedContext["System.State"] = "New";
   }

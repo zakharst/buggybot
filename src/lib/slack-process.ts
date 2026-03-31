@@ -18,6 +18,20 @@ import {
   type ProgressSteps,
 } from "@/lib/slack-bug-modal";
 import { formatError } from "@/lib/errors";
+
+function adoCreateFailureHint(err: unknown): string {
+  const s = formatError(err);
+  if (!s.includes("TF401320")) {
+    return "";
+  }
+  if (/Reported\s*from|Reportedfrom/i.test(s)) {
+    return (
+      "\n\nSet Vercel env AZURE_DEVOPS_REPORTED_FROM to one exact option from your “Reported from” picklist " +
+      "(run npm run ado:list-bug-fields locally), or put Custom.Reportedfrom in AZURE_DEVOPS_REQUIRED_FIELD_VALUES."
+    );
+  }
+  return "\n\nCheck AZURE_DEVOPS_REQUIRED_FIELD_VALUES for required picklist fields (TF401320).";
+}
 import { logError, logEvent } from "@/lib/logger";
 import { messageToBugJson } from "@/lib/openai-bug";
 import { getSettings } from "@/lib/settings";
@@ -479,12 +493,12 @@ export async function processCreateAzureBugShortcut(
           assigneeEmail,
         });
       } catch (e) {
-        const detail = formatError(e).slice(0, 300);
+        const detail = formatError(e).slice(0, 280);
         await showFailure(
           slack,
           modalSync,
           ctx,
-          `Azure DevOps error: ${detail}`,
+          `Azure DevOps error: ${detail}${adoCreateFailureHint(e)}`,
           ":x: *Bug not created* — Azure DevOps error.",
         );
         await cleanupLock();
