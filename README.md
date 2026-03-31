@@ -43,7 +43,7 @@ buggybot/
 │   │   └── schema.ts          # Drizzle schema
 │   └── lib/
 │       ├── assignment.ts      # Round-robin / random QA
-│       ├── azure-devops.ts    # REST: create Bug + comment
+│       ├── azure-devops.ts    # REST: create Bug; Slack link in Description footer
 │       ├── ado-bug-resolved-refs.ts  # Default Bug field refs (from config/*.json + env)
 │       ├── basic-auth.ts      # Parse & verify Basic header (Edge-safe)
 │       ├── errors.ts          # formatError()
@@ -260,7 +260,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 ## 9. Behavior summary
 
-- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug, optional Azure DevOps **Bug** + **comment** (Slack link), QA assignee from pool, thread reply with work item link.
+- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug, Azure DevOps **Bug** (Slack permalink in **Description** footer, no Discussion comment), QA assignee from pool, thread reply with work item link.
 
 ## License
 

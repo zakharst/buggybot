@@ -126,7 +126,7 @@ export const ADO_DESCRIPTION_EMPTY_MARKER =
 
 /**
  * Azure DevOps bug description in project QA layout (plain structure; minimal HTML wrapper for ADO).
- * Omits empty sections; no N/A or placeholders. Slack permalink stays in a separate work item comment.
+ * Omits empty sections; no N/A or placeholders. Slack permalink is appended via {@link appendSlackSourceToDescriptionHtml}.
  */
 export function buildAdoQaBugDescriptionHtml(params: {
   environment: string;
@@ -184,6 +184,40 @@ export function buildAdoQaBugDescriptionHtml(params: {
   }
 
   return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
+}
+
+/**
+ * Appends a footer to System.Description with Slack provenance and a clickable permalink (no separate ADO comment).
+ */
+export function appendSlackSourceToDescriptionHtml(
+  descriptionHtml: string,
+  params: { permalink?: string; channelId?: string; messageTs?: string },
+): string {
+  const base = (descriptionHtml || "").trimEnd();
+  const link = params.permalink?.trim();
+  const parts = [
+    '<hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>',
+    '<p style="font-family:Segoe UI,system-ui,sans-serif;font-size:12px;color:#555">',
+    "<b>Source:</b> Slack report.",
+  ];
+  if (link) {
+    const safe = escapeHtml(link);
+    parts.push(
+      "<br/><b>Original message:</b> ",
+      `<a href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`,
+    );
+  } else {
+    const ch = params.channelId?.trim() ?? "";
+    const ts = params.messageTs?.trim() ?? "";
+    if (ch && ts) {
+      parts.push(
+        "<br/>",
+        `<span>${escapeHtml(`Channel ${ch}, message ts ${ts}`)}</span>`,
+      );
+    }
+  }
+  parts.push("</p>");
+  return base + parts.join("");
 }
 
 /** Maps AI steps (and optional actual) to the Bug “Repro Steps” tab (HTML). */

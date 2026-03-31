@@ -4,7 +4,7 @@ import { getDb } from "@/db";
 import { slackMessageBugs } from "@/db/schema";
 import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import {
-  addWorkItemComment,
+  appendSlackSourceToDescriptionHtml,
   buildAdoAcceptanceCriteriaHtml,
   buildAdoDescriptionWithSlackFallback,
   buildAdoTcmReproStepsHtml,
@@ -463,16 +463,19 @@ export async function processCreateAzureBugShortcut(
       const { email: assigneeEmail, nextIndex } = pickAssignee(settings);
       const workItemType = process.env.AZURE_DEVOPS_WORK_ITEM_TYPE;
 
-      const descriptionHtml = buildAdoDescriptionWithSlackFallback(
-        {
-          environment: parsed.environment,
-          preconditions: parsed.preconditions,
-          stepsToReproduce: parsed.steps_to_reproduce,
-          actualResult: parsed.actual_result,
-          expectedResult: parsed.expected_result,
-          notes: parsed.notes,
-        },
-        messageText,
+      const descriptionHtml = appendSlackSourceToDescriptionHtml(
+        buildAdoDescriptionWithSlackFallback(
+          {
+            environment: parsed.environment,
+            preconditions: parsed.preconditions,
+            stepsToReproduce: parsed.steps_to_reproduce,
+            actualResult: parsed.actual_result,
+            expectedResult: parsed.expected_result,
+            notes: parsed.notes,
+          },
+          messageText,
+        ),
+        { permalink, channelId, messageTs },
       );
 
       const reproStepsHtml = buildAdoTcmReproStepsHtml(
@@ -549,20 +552,6 @@ export async function processCreateAzureBugShortcut(
         },
         "ado_created_finalizing_slack",
       );
-
-      const commentLines = [
-        "Created from Slack.",
-        permalink
-          ? `Original message: ${permalink}`
-          : `Channel ${channelId}, ts ${messageTs}`,
-      ];
-      await addWorkItemComment({
-        org,
-        project,
-        pat,
-        workItemId: created.id,
-        text: commentLines.join("\n\n"),
-      });
 
       await getDb()
         .update(slackMessageBugs)
