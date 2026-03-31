@@ -51,6 +51,7 @@ Return JSON only with this schema:
 Rules:
 - Use only facts present in the source message.
 - If a field is not supported by the source message, leave it empty.
+- When is_bug is true, populate steps_to_reproduce with at least one concrete step whenever the user described an action, navigation, tap, or sequence—even briefly (paraphrase the source; do not invent new screens).
 - Only set is_bug=true if the message clearly describes incorrect, broken, inconsistent, missing, crashing, blocked, or unexpected product behavior.
 - If the message is vague, exploratory, or not clearly a bug, set is_bug=false or use low confidence.
 - Do not invent environment, preconditions, steps, notes, device details, enterprise names, roles, pages, or technical causes.

@@ -113,6 +113,10 @@ function parseAzureDevOpsCreateExtraPatch(
   }
 }
 
+/** Shown when the model left structured sections empty — used to fall back to raw Slack text. */
+export const ADO_DESCRIPTION_EMPTY_MARKER =
+  "(No description details were present in the Slack message.)";
+
 /**
  * Azure DevOps bug description in project QA layout (plain structure; minimal HTML wrapper for ADO).
  * Omits empty sections; no N/A or placeholders. Slack permalink stays in a separate work item comment.
@@ -169,10 +173,77 @@ export function buildAdoQaBugDescriptionHtml(params: {
 
   const text = lines.join("\n").trim();
   if (!text) {
-    return "<p><i>(No description details were present in the Slack message.)</i></p>";
+    return `<p><i>${escapeHtml(ADO_DESCRIPTION_EMPTY_MARKER)}</i></p>`;
   }
 
   return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
+}
+
+/** Maps AI steps (and optional actual) to the Bug “Repro Steps” tab (HTML). */
+export function buildAdoTcmReproStepsHtml(
+  steps: string[],
+  actualResult?: string,
+): string {
+  const s = steps.map((x) => x.trim()).filter(Boolean);
+  const actual = actualResult?.trim() ?? "";
+  if (s.length) {
+    const items = s.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+    let html = `<ol>${items}</ol>`;
+    if (actual) {
+      html += `<p><b>Actual result:</b> ${escapeHtml(actual)}</p>`;
+    }
+    return html;
+  }
+  if (actual) return `<p>${escapeHtml(actual)}</p>`;
+  return "";
+}
+
+/** Maps env / preconditions / notes to the Bug “System Info” tab (HTML). */
+export function buildAdoTcmSystemInfoHtml(params: {
+  environment: string;
+  preconditions: string[];
+  notes: string[];
+}): string {
+  const lines: string[] = [];
+  const env = params.environment.trim();
+  if (env) lines.push(`Environment / platform: ${env}`);
+  const pre = params.preconditions.map((p) => p.trim()).filter(Boolean);
+  if (pre.length) {
+    lines.push("Context:");
+    for (const p of pre) lines.push(`• ${p}`);
+  }
+  const notes = params.notes.map((n) => n.trim()).filter(Boolean);
+  if (notes.length) {
+    lines.push("Notes:");
+    for (const n of notes) lines.push(`• ${n}`);
+  }
+  const text = lines.join("\n").trim();
+  if (!text) return "";
+  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
+}
+
+/** Maps expected result to the “Acceptance Criteria” tab when that field exists on the Bug type (HTML). */
+export function buildAdoAcceptanceCriteriaHtml(expectedResult: string): string {
+  const e = expectedResult.trim();
+  if (!e) return "";
+  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(e)}</div>`;
+}
+
+/**
+ * If structured sections are empty but Slack had text, use the raw message as Description
+ * so the work item is not blank in ADO layouts that hide System.Description.
+ */
+export function buildAdoDescriptionWithSlackFallback(
+  params: Parameters<typeof buildAdoQaBugDescriptionHtml>[0],
+  rawSlackMessage: string,
+): string {
+  const base = buildAdoQaBugDescriptionHtml(params);
+  const raw = rawSlackMessage.trim();
+  if (raw && base.includes(ADO_DESCRIPTION_EMPTY_MARKER)) {
+    const clipped = raw.length > 12000 ? `${raw.slice(0, 12000)}…` : raw;
+    return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(clipped)}</div><p><i>(Structured sections were empty; showing original Slack text.)</i></p>`;
+  }
+  return base;
 }
 
 export async function createAzureBug(params: {
@@ -184,6 +255,10 @@ export async function createAzureBug(params: {
   descriptionHtml: string;
   severity: "low" | "medium" | "high" | "critical";
   assigneeEmail?: string;
+  /** Fills Bug layout tabs (Repro Steps / System Info / Acceptance Criteria) when non-empty. */
+  reproStepsHtml?: string;
+  systemInfoHtml?: string;
+  acceptanceCriteriaHtml?: string;
 }): Promise<{ id: number; url: string }> {
   const type = params.workItemType ?? "Bug";
   const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`;
@@ -205,6 +280,31 @@ export async function createAzureBug(params: {
 
   if (!("System.State" in mergedContext)) {
     mergedContext["System.State"] = "New";
+  }
+
+  const disableTcmTabs =
+    process.env.AZURE_DEVOPS_DISABLE_TCM_TAB_FILL?.trim() === "1";
+  if (!disableTcmTabs) {
+    const reproRef =
+      process.env.AZURE_DEVOPS_REPRO_STEPS_FIELD_REF?.trim() ||
+      "Microsoft.VSTS.TCM.ReproSteps";
+    const systemInfoRef =
+      process.env.AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF?.trim() ||
+      "Microsoft.VSTS.TCM.SystemInfo";
+    const acRef =
+      process.env.AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF?.trim() ||
+      "Microsoft.VSTS.Common.AcceptanceCriteria";
+    const skipAc =
+      process.env.AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB?.trim() === "1";
+    if (params.reproStepsHtml?.trim()) {
+      mergedContext[reproRef] = params.reproStepsHtml;
+    }
+    if (params.systemInfoHtml?.trim()) {
+      mergedContext[systemInfoRef] = params.systemInfoHtml;
+    }
+    if (!skipAc && params.acceptanceCriteriaHtml?.trim()) {
+      mergedContext[acRef] = params.acceptanceCriteriaHtml;
+    }
   }
 
   const patch: Array<Record<string, string | unknown>> = [

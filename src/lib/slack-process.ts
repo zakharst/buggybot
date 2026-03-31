@@ -5,7 +5,10 @@ import { slackMessageBugs } from "@/db/schema";
 import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import {
   addWorkItemComment,
-  buildAdoQaBugDescriptionHtml,
+  buildAdoAcceptanceCriteriaHtml,
+  buildAdoDescriptionWithSlackFallback,
+  buildAdoTcmReproStepsHtml,
+  buildAdoTcmSystemInfoHtml,
   createAzureBug,
   normalizeSeverityForAdo,
 } from "@/lib/azure-devops";
@@ -460,14 +463,30 @@ export async function processCreateAzureBugShortcut(
       const { email: assigneeEmail, nextIndex } = pickAssignee(settings);
       const workItemType = process.env.AZURE_DEVOPS_WORK_ITEM_TYPE;
 
-      const descriptionHtml = buildAdoQaBugDescriptionHtml({
+      const descriptionHtml = buildAdoDescriptionWithSlackFallback(
+        {
+          environment: parsed.environment,
+          preconditions: parsed.preconditions,
+          stepsToReproduce: parsed.steps_to_reproduce,
+          actualResult: parsed.actual_result,
+          expectedResult: parsed.expected_result,
+          notes: parsed.notes,
+        },
+        messageText,
+      );
+
+      const reproStepsHtml = buildAdoTcmReproStepsHtml(
+        parsed.steps_to_reproduce,
+        parsed.actual_result,
+      );
+      const systemInfoHtml = buildAdoTcmSystemInfoHtml({
         environment: parsed.environment,
         preconditions: parsed.preconditions,
-        stepsToReproduce: parsed.steps_to_reproduce,
-        actualResult: parsed.actual_result,
-        expectedResult: parsed.expected_result,
         notes: parsed.notes,
       });
+      const acceptanceCriteriaHtml = buildAdoAcceptanceCriteriaHtml(
+        parsed.expected_result,
+      );
 
       const workTitle = parsed.title.trim() || "Bug from Slack";
 
@@ -490,6 +509,9 @@ export async function processCreateAzureBugShortcut(
           descriptionHtml,
           severity: normalizeSeverityForAdo(parsed.severity),
           assigneeEmail,
+          reproStepsHtml,
+          systemInfoHtml,
+          acceptanceCriteriaHtml,
         });
       } catch (e) {
         const detail = formatError(e).slice(0, 280);

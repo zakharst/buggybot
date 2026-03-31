@@ -205,9 +205,14 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_REPORTED_FROM` | Overrides the built-in default **`DT team`** for **`Custom.Reportedfrom`** on every Slack create (wins over `REQUIRED_FIELD_VALUES`). Must match the picklist exactly (see `ado:list-bug-fields`). |
 | `AZURE_DEVOPS_REPORTED_FROM_FIELD_REF` | Optional override when the field reference is not `Custom.Reportedfrom`. |
 | `AZURE_DEVOPS_CREATE_EXTRA_PATCH` | Optional JSON array of extra `add` operations (applied **after** `REQUIRED_FIELD_VALUES`, so can override). Paths must start with `/fields/`. **Empty string values are skipped.** |
+| `AZURE_DEVOPS_DISABLE_TCM_TAB_FILL` | Set to `1` to stop filling **Repro Steps**, **System Info**, and **Acceptance Criteria** (defaults target standard Azure Boards Bug refs). Use if work item create fails with an unknown field. |
+| `AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB` | Set to `1` to skip only **Acceptance Criteria** (`Microsoft.VSTS.Common.AcceptanceCriteria`) when your Bug type has no such field. |
+| `AZURE_DEVOPS_REPRO_STEPS_FIELD_REF` / `AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF` / `AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF` | Override reference names if your process template uses different fields for those tabs. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
-**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** is always set to **`DT team`** for Slack-created bugs (`Custom.Reportedfrom`); override with **`AZURE_DEVOPS_REPORTED_FROM`** if your picklist label differs. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**. |
+**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
+
+**Bug layout (Repro Steps / System Info / Acceptance Criteria):** Slack-created bugs also fill **`Microsoft.VSTS.TCM.ReproSteps`**, **`Microsoft.VSTS.TCM.SystemInfo`**, and **`Microsoft.VSTS.Common.AcceptanceCriteria`** from the OpenAI-structured fields (plus **`System.Description`** as the full QA-style block). If create fails, set **`AZURE_DEVOPS_DISABLE_TCM_TAB_FILL=1`** or adjust field refs / **`AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB`**. If the model returns empty sections, **Description** falls back to the **raw Slack message** text. |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
