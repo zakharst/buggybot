@@ -5,8 +5,9 @@ import { slackMessageBugs } from "@/db/schema";
 import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import {
   addWorkItemComment,
-  buildBugDescriptionHtml,
+  buildAdoQaBugDescriptionHtml,
   createAzureBug,
+  normalizeSeverityForAdo,
 } from "@/lib/azure-devops";
 import { formatError } from "@/lib/errors";
 import { logError, logEvent } from "@/lib/logger";
@@ -178,12 +179,38 @@ export async function processCreateAzureBugShortcut(
         slackMetadata,
       });
 
+      if (!parsed.is_bug) {
+        const parts = [
+          parsed.title.trim(),
+          parsed.environment.trim(),
+          ...parsed.notes.map((n) => n.trim()).filter(Boolean),
+        ].filter(Boolean);
+        const combined = parts.join(" · ");
+        const note = combined
+          ? `\n_${combined.slice(0, 400)}${combined.length > 400 ? "…" : ""}_`
+          : "";
+        await postThreadReply(
+          slack,
+          channelId,
+          threadTs,
+          `:information_source: This message is **not treated as a software bug** (conservative QA intake).${note}\n_No Azure DevOps work item was created._`,
+        );
+        await cleanupLock();
+        await logEvent("info", "skipped is_bug false", {
+          confidence: parsed.confidence,
+          teamId,
+          channelId,
+          messageTs,
+        });
+        return;
+      }
+
       if (parsed.confidence < settings.confidenceThreshold) {
         await postThreadReply(
           slack,
           channelId,
           threadTs,
-          `:thinking_face: I am not confident enough to file a bug automatically (confidence ${parsed.confidence.toFixed(2)} < ${settings.confidenceThreshold}).\n*Suggested title:* ${parsed.title}\n_Admin can lower the threshold in /admin._`,
+          `:thinking_face: Confidence is too low to create a bug automatically (${parsed.confidence.toFixed(2)} < ${settings.confidenceThreshold}).\n*Suggested title:* ${parsed.title}\n_Admin can lower the threshold in /admin._`,
         );
         await cleanupLock();
         await logEvent("info", "skipped low confidence", {
@@ -219,20 +246,25 @@ export async function processCreateAzureBugShortcut(
       const { email: assigneeEmail, nextIndex } = pickAssignee(settings);
       const workItemType = process.env.AZURE_DEVOPS_WORK_ITEM_TYPE;
 
-      const descriptionHtml = buildBugDescriptionHtml({
-        description: parsed.description,
-        reproSteps: parsed.reproSteps,
+      const descriptionHtml = buildAdoQaBugDescriptionHtml({
+        environment: parsed.environment,
+        preconditions: parsed.preconditions,
+        stepsToReproduce: parsed.steps_to_reproduce,
+        actualResult: parsed.actual_result,
+        expectedResult: parsed.expected_result,
         notes: parsed.notes,
       });
+
+      const workTitle = parsed.title.trim() || "Bug from Slack";
 
       const created = await createAzureBug({
         org,
         project,
         pat,
         workItemType: workItemType || undefined,
-        title: parsed.title,
+        title: workTitle,
         descriptionHtml,
-        severity: parsed.severity,
+        severity: normalizeSeverityForAdo(parsed.severity),
         assigneeEmail,
       });
 

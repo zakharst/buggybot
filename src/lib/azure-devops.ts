@@ -2,6 +2,17 @@ function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
 }
 
+/** Map free-form model label to ADO severity field (empty string → medium). */
+export function normalizeSeverityForAdo(raw: string): "low" | "medium" | "high" | "critical" {
+  const s = raw.toLowerCase().trim();
+  if (!s || s === "unspecified") return "medium";
+  if (/(critical|blocker|sev\s*1|\bp0\b)/i.test(raw)) return "critical";
+  if (/(high|major|\bp1\b|sev\s*2)/i.test(raw)) return "high";
+  if (/(low|minor|trivial|cosmetic|\bp4\b|sev\s*4)/i.test(raw)) return "low";
+  if (/(medium|moderate|\bp2\b|\bp3\b|sev\s*3)/i.test(raw)) return "medium";
+  return "medium";
+}
+
 function severityToAdo(
   s: "low" | "medium" | "high" | "critical",
 ): string {
@@ -22,23 +33,66 @@ function escapeHtml(s: string) {
     .replaceAll('"', "&quot;");
 }
 
-export function buildBugDescriptionHtml(params: {
-  description: string;
-  reproSteps: string[];
-  notes?: string;
+/**
+ * Azure DevOps bug description in project QA layout (plain structure; minimal HTML wrapper for ADO).
+ * Omits empty sections; no N/A or placeholders. Slack permalink stays in a separate work item comment.
+ */
+export function buildAdoQaBugDescriptionHtml(params: {
+  environment: string;
+  preconditions: string[];
+  stepsToReproduce: string[];
+  actualResult: string;
+  expectedResult: string;
+  notes: string[];
 }): string {
-  const parts: string[] = [`<p>${escapeHtml(params.description).replaceAll("\n", "<br/>")}</p>`];
-  if (params.reproSteps.length) {
-    parts.push("<p><b>Repro steps</b></p><ol>");
-    for (const step of params.reproSteps) {
-      parts.push(`<li>${escapeHtml(step)}</li>`);
-    }
-    parts.push("</ol>");
+  const lines: string[] = [];
+
+  const env = params.environment.trim();
+  if (env) {
+    lines.push(`Env: ${env}`);
   }
-  if (params.notes) {
-    parts.push(`<p><i>${escapeHtml(params.notes)}</i></p>`);
+
+  const pre = params.preconditions.map((p) => p.trim()).filter(Boolean);
+  if (pre.length) {
+    if (lines.length) lines.push("");
+    lines.push("Preconditions:");
+    for (const p of pre) lines.push(`- ${p}`);
   }
-  return parts.join("");
+
+  const steps = params.stepsToReproduce.map((s) => s.trim()).filter(Boolean);
+  if (steps.length) {
+    if (lines.length) lines.push("");
+    lines.push("Steps:");
+    steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+  }
+
+  const actual = params.actualResult.trim();
+  if (actual) {
+    if (lines.length) lines.push("");
+    lines.push("Actual result:");
+    lines.push(actual);
+  }
+
+  const expected = params.expectedResult.trim();
+  if (expected) {
+    if (lines.length) lines.push("");
+    lines.push("Expected result:");
+    lines.push(expected);
+  }
+
+  const notes = params.notes.map((n) => n.trim()).filter(Boolean);
+  if (notes.length) {
+    if (lines.length) lines.push("");
+    lines.push("Notes:");
+    for (const n of notes) lines.push(`- ${n}`);
+  }
+
+  const text = lines.join("\n").trim();
+  if (!text) {
+    return "<p><i>(No description details were present in the Slack message.)</i></p>";
+  }
+
+  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
 }
 
 export async function createAzureBug(params: {
