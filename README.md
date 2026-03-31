@@ -123,7 +123,7 @@ Drizzle mirrors this in `src/db/schema.ts` for the app runtime.
 
 ## 4. Slack setup (exact)
 
-All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
+Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`** (same handler as legacy **`/api/slack`**). **No Socket Mode.**
 
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
 
@@ -138,8 +138,8 @@ All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
 
 5. **Interactivity & Shortcuts**:
    - Turn **Interactivity** **On**.
-   - **Request URL**: `https://<YOUR_DOMAIN>/api/slack`  
-     (local dev: use [ngrok](https://ngrok.com) or similar — Slack cannot reach `localhost`.)
+   - **Request URL**: **`${APP_BASE_URL}/api/slack/interactions`** (set `APP_BASE_URL` to your public origin, e.g. `https://buggybot.vercel.app`).  
+     Local dev: use [ngrok](https://ngrok.com) with the same path — Slack cannot reach `localhost` directly.
 
 6. Under **Shortcuts** → **Create New Shortcut**:
    - **Location**: **On messages**
@@ -168,15 +168,13 @@ All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
 
 5. **Database tables** — on each Vercel production build, `prebuild` runs `drizzle-kit push --force` against `DATABASE_URL` (see `scripts/vercel-db-push.mjs`), so tables are created or updated automatically. You can still run `schema.sql` manually in Neon **SQL Editor** if you prefer.
 
-6. **Environment Variables** — in Vercel → **Settings** → **Environment Variables**, add the **remaining** variables from **section 6** (`SLACK_*`, `OPENAI_*`, `AZURE_DEVOPS_*`, `ADMIN_BASIC_AUTH_*`, etc.). Do **not** replace `DATABASE_URL` unless you know what you’re doing—it should already be set by the Neon integration.
+6. **Environment Variables** — in Vercel → **Settings** → **Environment Variables**, add the **remaining** variables from **section 6** (`APP_BASE_URL`, `SLACK_*`, `OPENAI_*`, `AZURE_DEVOPS_*`, `ADMIN_BASIC_AUTH_*`, etc.). Do **not** replace `DATABASE_URL` unless you know what you’re doing—it should already be set by the Neon integration.
 
-7. Deploy. Optionally set **`NEXT_PUBLIC_APP_URL`** to your production URL (e.g. `https://buggybot.vercel.app`) so `/admin` shows the correct Slack Request URL hint.
+7. Set **`APP_BASE_URL`** to your production origin with **no trailing slash**, e.g. `https://buggybot.vercel.app`. The `/admin` page uses **only** this variable to show the Slack Interactivity URL (no `VERCEL_URL` / `NEXT_PUBLIC_*` fallbacks).
 
-8. In the Slack app settings, set **Interactivity Request URL** to:
+8. Deploy. In Slack, set **Interactivity Request URL** to the value shown in **Admin** (same as `APP_BASE_URL` + `/api/slack/interactions`).
 
-   `https://<your-vercel-domain>/api/slack`
-
-9. **Vercel** → **Project** → **Settings** → **Functions**: this app sets `maxDuration = 60` on `/api/slack` so the `after()` task (OpenAI + Azure DevOps) can finish.
+9. **Vercel** → **Project** → **Settings** → **Functions**: this app sets `maxDuration = 60` on the Slack API routes so the `after()` task (OpenAI + Azure DevOps) can finish.
 
 ---
 
@@ -193,6 +191,7 @@ All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
 | `AZURE_DEVOPS_PROJECT` | **Yes** | Project name |
 | `ADMIN_BASIC_AUTH_USER` | **Yes** | Basic auth username for `/admin` |
 | `ADMIN_BASIC_AUTH_PASSWORD` | **Yes** | Basic auth password for `/admin` |
+| `APP_BASE_URL` | **Yes** (prod) | Public site origin only, e.g. `https://buggybot.vercel.app` (no trailing slash). Admin shows `${APP_BASE_URL}/api/slack/interactions` for Slack. If unset, admin shows a warning instead of guessing. |
 
 **Optional:**
 
@@ -200,7 +199,6 @@ All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
 |----------|-------------|
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
-| `NEXT_PUBLIC_APP_URL` | Public site URL for admin UI hints |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
@@ -222,7 +220,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 - **`logEvent(level, message, meta?)`** — writes to `app_logs` (failures fall back to `console.error`).
 - **`logError(message, err, meta?)`** — formats `err` with **`formatError`**, logs to DB + **stderr**.
-- **`POST /api/slack`** — verifies signature; logs warnings/errors; uses **`after()`** for the shortcut pipeline; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
+- **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; uses **`after()`** for the shortcut pipeline; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
 - **Shortcut pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
 
 ---

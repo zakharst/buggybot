@@ -5,14 +5,11 @@ import { AdminPanel } from "./admin-panel";
 
 export const dynamic = "force-dynamic";
 
-function publicBaseUrl() {
-  if (process.env.NEXT_PUBLIC_APP_URL) {
-    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL.replace(/\/$/, "")}`;
-  }
-  return "http://localhost:3000";
+function slackInteractionsUrlFromEnv(): string | null {
+  const raw = process.env.APP_BASE_URL?.trim();
+  if (!raw) return null;
+  const base = raw.replace(/\/$/, "");
+  return `${base}/api/slack/interactions`;
 }
 
 export default async function AdminPage() {
@@ -53,13 +50,11 @@ export default async function AdminPage() {
     );
   }
 
-  const slackApiUrl = `${publicBaseUrl()}/api/slack`;
-
   return (
     <AdminPanel
       settings={settings}
       logs={logs}
-      slackApiUrl={slackApiUrl}
+      slackInteractionsUrl={slackInteractionsUrlFromEnv()}
       envStatus={{
         hasOpenAi: Boolean(process.env.OPENAI_API_KEY),
         hasSlackSigning: Boolean(process.env.SLACK_SIGNING_SECRET),
@@ -72,6 +67,7 @@ export default async function AdminPage() {
             process.env.ADMIN_BASIC_AUTH_PASSWORD,
         ),
         hasDatabaseUrl: Boolean(process.env.DATABASE_URL?.trim()),
+        hasAppBaseUrl: Boolean(process.env.APP_BASE_URL?.trim()),
       }}
     />
   );

@@ -37,10 +37,12 @@ export function AdminPanel(props: {
     envAdoProject: boolean;
     hasBasicAuth: boolean;
     hasDatabaseUrl: boolean;
+    hasAppBaseUrl: boolean;
   };
-  slackApiUrl: string;
+  /** Full Slack Interactivity Request URL, or null if APP_BASE_URL is unset. */
+  slackInteractionsUrl: string | null;
 }) {
-  const { settings, logs, envStatus, slackApiUrl } = props;
+  const { settings, logs, envStatus, slackInteractionsUrl } = props;
   const [saveState, formAction] = useActionState<
     SaveAdminState,
     FormData
@@ -90,10 +92,29 @@ export function AdminPanel(props: {
           <li>
             Admin Basic Auth: <Status ok={envStatus.hasBasicAuth} />
           </li>
+          <li>
+            APP_BASE_URL (Slack URL preview):{" "}
+            <Status ok={envStatus.hasAppBaseUrl} />
+          </li>
         </ul>
         <p className="mt-4 text-xs text-[var(--muted)]">
-          Slack interactions URL:{" "}
-          <code className="break-all text-[var(--accent)]">{slackApiUrl}</code>
+          Slack interactions URL (Interactivity Request URL):{" "}
+          {slackInteractionsUrl ? (
+            <code className="break-all text-[var(--accent)]">
+              {slackInteractionsUrl}
+            </code>
+          ) : (
+            <span className="text-[var(--danger)]">
+              Set{" "}
+              <code className="text-[var(--accent)]">APP_BASE_URL</code> to your
+              public site origin (e.g.{" "}
+              <code className="text-[var(--accent)]">
+                https://buggybot.vercel.app
+              </code>
+              , no trailing slash). No automatic preview — avoids wrong URLs on
+              Vercel preview deployments.
+            </span>
+          )}
         </p>
       </section>
 
