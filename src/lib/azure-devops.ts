@@ -33,6 +33,67 @@ function escapeHtml(s: string) {
     .replaceAll('"', "&quot;");
 }
 
+/** Fields this app already sets on create; skipped from AZURE_DEVOPS_REQUIRED_FIELD_VALUES to avoid duplicate patch ops. */
+const ADO_FIELDS_SET_BY_APP = new Set([
+  "System.Title",
+  "System.Description",
+  "Microsoft.VSTS.Common.Severity",
+  "System.AssignedTo",
+]);
+
+/**
+ * Optional map of field reference names → values for work item create (process-required picklists, Area Path, etc.).
+ * Env: AZURE_DEVOPS_REQUIRED_FIELD_VALUES — JSON object, e.g. {"Custom.Reportedfrom":"Slack","System.AreaPath":"Proj\\\\Team"}.
+ * Keys that duplicate fields the app sets (title, description, severity, assignee) are ignored.
+ */
+function parseAzureDevOpsRequiredFieldValues(
+  raw: string | undefined,
+): Array<Record<string, string | unknown>> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const out: Array<Record<string, string | unknown>> = [];
+    for (const [refName, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof refName !== "string" || !refName.includes(".")) continue;
+      if (refName.length > 256) continue;
+      if (ADO_FIELDS_SET_BY_APP.has(refName)) continue;
+      if (value === undefined || value === null) continue;
+      out.push({ op: "add", path: `/fields/${refName}`, value });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Optional extra fields for work item create (process rules), e.g. required picklists like "Reported from".
+ * Env: AZURE_DEVOPS_CREATE_EXTRA_PATCH — JSON array of { "op": "add", "path": "/fields/...", "value": ... }.
+ * Only `op: "add"` and paths under `/fields/` are accepted.
+ */
+function parseAzureDevOpsCreateExtraPatch(
+  raw: string | undefined,
+): Array<Record<string, string | unknown>> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: Array<Record<string, string | unknown>> = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      if (o.op !== "add") continue;
+      if (typeof o.path !== "string" || !o.path.startsWith("/fields/")) continue;
+      if (!("value" in o)) continue;
+      out.push({ op: "add", path: o.path, value: o.value });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Azure DevOps bug description in project QA layout (plain structure; minimal HTML wrapper for ADO).
  * Omits empty sections; no N/A or placeholders. Slack permalink stays in a separate work item comment.
@@ -124,6 +185,13 @@ export async function createAzureBug(params: {
       value: params.assigneeEmail,
     });
   }
+
+  patch.push(
+    ...parseAzureDevOpsRequiredFieldValues(
+      process.env.AZURE_DEVOPS_REQUIRED_FIELD_VALUES,
+    ),
+  );
+  patch.push(...parseAzureDevOpsCreateExtraPatch(process.env.AZURE_DEVOPS_CREATE_EXTRA_PATCH));
 
   const res = await fetch(url, {
     method: "PATCH",
