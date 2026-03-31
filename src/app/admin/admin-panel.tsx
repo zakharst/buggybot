@@ -36,6 +36,7 @@ export function AdminPanel(props: {
     envAdoOrg: boolean;
     envAdoProject: boolean;
     hasBasicAuth: boolean;
+    hasDatabaseUrl: boolean;
   };
   slackApiUrl: string;
 }) {
@@ -62,6 +63,10 @@ export function AdminPanel(props: {
       <section className="mt-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
         <h2 className="text-lg font-medium">Secrets (environment)</h2>
         <ul className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <li>
+            DATABASE_URL (Neon / Vercel Storage):{" "}
+            <Status ok={envStatus.hasDatabaseUrl} />
+          </li>
           <li>
             OpenAI API key:{" "}
             <Status ok={envStatus.hasOpenAi} />

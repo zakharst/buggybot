@@ -1,5 +1,5 @@
 import { desc } from "drizzle-orm";
-import { db } from "@/db";
+import { getDb } from "@/db";
 import { appLogs } from "@/db/schema";
 import { formatError } from "@/lib/errors";
 
@@ -11,7 +11,7 @@ export async function logEvent(
   meta?: Record<string, unknown>,
 ) {
   try {
-    await db.insert(appLogs).values({ level, message, meta: meta ?? null });
+    await getDb().insert(appLogs).values({ level, message, meta: meta ?? null });
   } catch (e) {
     console.error("[logEvent failed]", level, message, meta, formatError(e));
   }
@@ -29,7 +29,7 @@ export async function logError(
 }
 
 export async function getRecentLogs(limit = 100) {
-  return db
+  return getDb()
     .select()
     .from(appLogs)
     .orderBy(desc(appLogs.id))

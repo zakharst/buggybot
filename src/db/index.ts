@@ -1,39 +1,42 @@
 import { drizzle } from "drizzle-orm/postgres-js";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
 
 /**
- * Vercel Marketplace Postgres (Neon): use the pooled `postgresql://…` URL Vercel sets as
- * `DATABASE_URL`. Local dev: same variable from the Neon dashboard.
- *
- * This is the only database env var the app reads (no POSTGRES_URL, PRISMA_DATABASE_URL, etc.).
+ * Vercel Marketplace Postgres (Neon): pooled `postgresql://…` in `DATABASE_URL` only.
+ * Connection is created on first `getDb()` — avoids crashing unrelated routes when the
+ * DB module is pulled in (e.g. RSC prefetch of `/admin` from `/`).
  */
 function getDatabaseUrl(): string {
   const raw = process.env.DATABASE_URL;
   if (typeof raw !== "string" || !raw.trim()) {
     throw new Error(
-      "DATABASE_URL is not set. Add Neon via Vercel → Storage (Marketplace) and use the injected DATABASE_URL, or set it in .env for local dev.",
+      "DATABASE_URL is not set. In Vercel: Storage → Neon (DATABASE_URL is injected).",
     );
   }
   return raw.trim();
 }
 
-/** Reuse one client during `next dev` to avoid exhausting Neon connection limits. */
 const globalForPg = globalThis as unknown as {
   buggybotPostgres?: ReturnType<typeof postgres>;
+  buggybotDb?: PostgresJsDatabase<typeof schema>;
 };
 
-const sql =
-  globalForPg.buggybotPostgres ??
-  postgres(getDatabaseUrl(), {
-    max: 1,
-    // Required for Neon pooler / PgBouncer-style pooled URLs
-    prepare: false,
-    connection: { application_name: "buggybot" },
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPg.buggybotPostgres = sql;
+function getPostgresClient(): ReturnType<typeof postgres> {
+  if (!globalForPg.buggybotPostgres) {
+    globalForPg.buggybotPostgres = postgres(getDatabaseUrl(), {
+      max: 1,
+      prepare: false,
+      connection: { application_name: "buggybot" },
+    });
+  }
+  return globalForPg.buggybotPostgres;
 }
 
-export const db = drizzle(sql, { schema });
+export function getDb(): PostgresJsDatabase<typeof schema> {
+  if (!globalForPg.buggybotDb) {
+    globalForPg.buggybotDb = drizzle(getPostgresClient(), { schema });
+  }
+  return globalForPg.buggybotDb;
+}

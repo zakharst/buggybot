@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db } from "@/db";
+import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
 import {
   SETTINGS_KEY,
@@ -19,7 +19,7 @@ export async function getSettings(): Promise<SettingsPayload> {
     roundRobinIndex: 0,
   });
 
-  const row = await db.query.appSettings.findFirst({
+  const row = await getDb().query.appSettings.findFirst({
     where: eq(appSettings.key, SETTINGS_KEY),
   });
   if (!row?.value || typeof row.value !== "object") {
@@ -37,7 +37,7 @@ export async function saveSettings(
   const current = await getSettings();
   const next = settingsPayloadSchema.parse({ ...current, ...partial });
 
-  await db
+  await getDb()
     .insert(appSettings)
     .values({ key: SETTINGS_KEY, value: next as Record<string, unknown> })
     .onConflictDoUpdate({

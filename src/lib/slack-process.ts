@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { WebClient } from "@slack/web-api";
-import { db } from "@/db";
+import { getDb } from "@/db";
 import { slackMessageBugs } from "@/db/schema";
 import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import {
@@ -77,7 +77,7 @@ export async function processCreateAzureBugShortcut(
       return;
     }
 
-    const inserted = await db
+    const inserted = await getDb()
       .insert(slackMessageBugs)
       .values({
         teamId,
@@ -96,7 +96,7 @@ export async function processCreateAzureBugShortcut(
       .returning({ id: slackMessageBugs.id });
 
     if (inserted.length === 0) {
-      const existing = await db
+      const existing = await getDb()
         .select()
         .from(slackMessageBugs)
         .where(
@@ -129,7 +129,7 @@ export async function processCreateAzureBugShortcut(
     const lockRowId = inserted[0]!.id;
 
     const cleanupLock = async () => {
-      await db.delete(slackMessageBugs).where(eq(slackMessageBugs.id, lockRowId));
+      await getDb().delete(slackMessageBugs).where(eq(slackMessageBugs.id, lockRowId));
     };
 
     try {
@@ -250,7 +250,7 @@ export async function processCreateAzureBugShortcut(
         text: commentLines.join("\n\n"),
       });
 
-      await db
+      await getDb()
         .update(slackMessageBugs)
         .set({
           workItemId: String(created.id),

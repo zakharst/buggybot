@@ -12,6 +12,7 @@ export default function HomePage() {
         Admin uses HTTP Basic Auth (browser username/password prompt).
       </p>
       <Link
+        prefetch={false}
         href="/admin"
         className="inline-flex w-fit rounded-md bg-[var(--accent)] px-4 py-2 font-medium text-[var(--bg)] hover:opacity-90"
       >
