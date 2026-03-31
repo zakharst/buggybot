@@ -26,8 +26,7 @@ function adoCreateFailureHint(err: unknown): string {
   }
   if (/Reported\s*from|Reportedfrom/i.test(s)) {
     return (
-      "\n\nSet Vercel env AZURE_DEVOPS_REPORTED_FROM to one exact option from your “Reported from” picklist " +
-      "(run npm run ado:list-bug-fields locally), or put Custom.Reportedfrom in AZURE_DEVOPS_REQUIRED_FIELD_VALUES."
+      "\n\nCheck picklist spelling (default in app is DT team). Set AZURE_DEVOPS_REPORTED_FROM to the exact option from ado:list-bug-fields, or AZURE_DEVOPS_REPORTED_FROM_FIELD_REF if the field ref is not Custom.Reportedfrom."
     );
   }
   return "\n\nCheck AZURE_DEVOPS_REQUIRED_FIELD_VALUES for required picklist fields (TF401320).";

@@ -198,14 +198,10 @@ export async function createAzureBug(params: {
   const reportedFromRef =
     process.env.AZURE_DEVOPS_REPORTED_FROM_FIELD_REF?.trim() ||
     "Custom.Reportedfrom";
+  /** Exact picklist label from process (case-sensitive). ado:list-bug-fields lists allowed values. */
   const reportedFromValue =
-    process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() || "DT Team";
-  if (
-    mergedContext[reportedFromRef] === undefined ||
-    isEmptyAdoFieldValue(mergedContext[reportedFromRef])
-  ) {
-    mergedContext[reportedFromRef] = reportedFromValue;
-  }
+    process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() || "DT team";
+  mergedContext[reportedFromRef] = reportedFromValue;
 
   if (!("System.State" in mergedContext)) {
     mergedContext["System.State"] = "New";
