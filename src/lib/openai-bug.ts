@@ -27,11 +27,11 @@ export type BugIntakeResult = z.infer<typeof bugIntakeSchema>;
 
 const SYSTEM_PROMPT = `You are an internal QA bug intake assistant for Azure DevOps.
 
-Your job is to convert Slack bug reports into structured bug data in the style of our existing Azure DevOps bugs.
+Your job is to convert Slack bug reports into structured bug data in the style of our existing Azure DevOps bugs—maximally useful for triage and reproduction, while staying strictly faithful to what the reporter actually said.
 
 Our style:
 - short direct bug title
-- QA-style wording
+- QA-style wording (STR / preconditions / actual / expected patterns when the backlog reference suggests it)
 - concise and factual
 - no polished narrative
 - no root cause assumptions
@@ -53,16 +53,17 @@ Return JSON only with this schema:
 }
 
 Rules:
-- Use only facts present in the source message.
-- If a field is not supported by the source message, leave it empty.
-- When is_bug is true, populate steps_to_reproduce with at least one concrete step whenever the user described an action, navigation, tap, or sequence—even briefly (paraphrase the source; do not invent new screens).
+- Use only facts present in the source message (and obvious spelling fixes that do not change meaning).
+- Maximize completeness within that constraint: prefer non-empty fields when the message gives any hint—e.g. platform or channel words → environment; "on Overview" / "after deleting report" → preconditions or early steps; shorthand ("can't submit") → spell out the actions the user clearly implied in order (open, fill, tap) without naming new screens they did not mention.
+- If a field truly has no support in the message, leave it empty (empty string or []).
+- When is_bug is true, steps_to_reproduce should be ordered, one action or observation per array element when possible; merge choppy fragments that describe the same step.
 - Only set is_bug=true if the message clearly describes incorrect, broken, inconsistent, missing, crashing, blocked, or unexpected product behavior.
 - If the message is vague, exploratory, or not clearly a bug, set is_bug=false or use low confidence.
-- Do not invent environment, preconditions, steps, notes, device details, enterprise names, roles, pages, or technical causes.
-- Preserve environment/platform/module/page names only if explicitly mentioned.
-- Preserve multiple scenarios only if clearly stated.
+- Do not invent environment, preconditions, steps, notes, device details, enterprise names, roles, pages, error codes, or technical causes that are not stated or clearly implied by the same message.
+- Preserve environment/platform/module/page names only if explicitly mentioned (or clearly implied by product shorthand the team uses in the message).
+- Use notes for scope ("also when…"), workarounds, or secondary symptoms the user mentioned without cluttering steps.
 - Severity must be one of: low, medium, high, critical, or empty string.
-- Confidence must be a number from 0 to 1.
+- Confidence must be a number from 0 to 1 (lower when the report is thin or ambiguous).
 
 Title guidance:
 - Keep it short and bug-like.
@@ -71,7 +72,7 @@ Title guidance:
   - NSO order is displayed on Overview
   - Search field disappears after Visit Report deleting on Android
   - Value is wrapped across multiple lines
-- Do not use generic titles.
+- Prefer specific nouns from the message over generic titles ("Button does nothing" only if the message is that vague).
 - Do not include unnecessary prefixes unless clearly present in the issue context.
 
 Expected result guidance:
@@ -83,6 +84,29 @@ Expected result guidance:
   - expected: page should open normally
 
 Output only valid JSON.`;
+
+const REFINE_SYSTEM_PROMPT = `You are a QA editor refining a draft bug-intake JSON that was extracted from a Slack message.
+
+You receive: (1) the original Slack context and message, (2) the draft JSON.
+
+Goals (strict factual bounds):
+- Improve clarity, ordering, and granularity so Azure DevOps readers can reproduce the issue—match concise backlog-style QA phrasing.
+- Split or merge steps only when the Slack message (or draft) already implies distinct actions or redundant lines.
+- Strengthen actual_result / expected_result wording when the meaning is already in the source; tighten title if it is generic but the message contains specifics.
+- Use notes for secondary details instead of overloading steps.
+
+Hard rules:
+- Do not introduce new entities: apps, pages, roles, versions, devices, enterprises, URLs, or error strings not present in the Slack message or draft.
+- Do not flip is_bug from true to false or false to true.
+- Severity must remain one of: low, medium, high, critical, or empty string.
+- Adjust confidence by at most 0.1 from the draft value, and only if wording changes justify it.
+
+Return the full JSON object matching the same schema as the draft.`;
+
+function bugRefineSecondPassEnabled(): boolean {
+  const v = process.env.OPENAI_BUG_REFINE_SECOND_PASS?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
 
 type BugExamplesJson = {
   systemPromptExtra?: string;
@@ -297,6 +321,7 @@ export async function messageToBugJson(params: {
 
   const completion = await client.beta.chat.completions.parse({
     model: params.model,
+    temperature: 0.25,
     messages: [
       { role: "system", content: systemContent },
       ...fewShot,
@@ -308,9 +333,36 @@ export async function messageToBugJson(params: {
     response_format: zodResponseFormat(bugIntakeSchema, "bug_intake"),
   });
 
-  const parsed = completion.choices[0]?.message.parsed;
+  let parsed = completion.choices[0]?.message.parsed;
   if (!parsed) {
     throw new Error("OpenAI returned no parsed bug intake");
   }
+
+  if (bugRefineSecondPassEnabled()) {
+    const refineCompletion = await client.beta.chat.completions.parse({
+      model: params.model,
+      temperature: 0.15,
+      messages: [
+        {
+          role: "system",
+          content: REFINE_SYSTEM_PROMPT + backlogReferenceMarkdownBlock(),
+        },
+        {
+          role: "user",
+          content:
+            "Refine this draft JSON. Return only the JSON object.\n\n---\n" +
+            userPayload +
+            "\n\n---\nDraft JSON:\n" +
+            JSON.stringify(parsed),
+        },
+      ],
+      response_format: zodResponseFormat(bugIntakeSchema, "bug_intake_refined"),
+    });
+    const refined = refineCompletion.choices[0]?.message.parsed;
+    if (refined) {
+      parsed = refined;
+    }
+  }
+
   return parsed;
 }
