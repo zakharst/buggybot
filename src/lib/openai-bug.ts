@@ -1,7 +1,9 @@
 import OpenAI from "openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { loadAdoRequiredFieldRefsForPrompt } from "@/lib/ado-required-field-refs";
+import bugExamplesFile from "../../config/openai-bug-examples.json";
 
 /** QA-style Azure DevOps bug intake (strict JSON from model; description HTML built in app). */
 export const bugIntakeSchema = z.object({
@@ -79,6 +81,31 @@ Expected result guidance:
   - expected: page should open normally
 
 Output only valid JSON.`;
+
+type BugExamplesJson = {
+  systemPromptExtra?: string;
+  examples?: Array<{ input: string; output: Record<string, unknown> }>;
+};
+
+const bugExamples = bugExamplesFile as BugExamplesJson;
+
+function backlogFewShotMessages(): ChatCompletionMessageParam[] {
+  const rows = bugExamples.examples ?? [];
+  const capped = rows.slice(0, 12);
+  const out: ChatCompletionMessageParam[] = [];
+  for (const row of capped) {
+    const inp = typeof row.input === "string" ? row.input.trim() : "";
+    if (!inp || !row.output || typeof row.output !== "object") continue;
+    out.push({
+      role: "user",
+      content:
+        "Example from our real Azure DevOps bugs (match tone, granularity, and how we fill steps / actual / expected).\nInput:\n" +
+        inp,
+    });
+    out.push({ role: "assistant", content: JSON.stringify(row.output) });
+  }
+  return out;
+}
 
 function adoConfiguredFieldsPromptBlock(): string {
   const refs = loadAdoRequiredFieldRefsForPrompt();
@@ -195,6 +222,19 @@ const EX5_ASSISTANT = JSON.stringify({
   confidence: 0.91,
 });
 
+const BUILTIN_FEW_SHOT: ChatCompletionMessageParam[] = [
+  { role: "user", content: EX1_USER },
+  { role: "assistant", content: EX1_ASSISTANT },
+  { role: "user", content: EX2_USER },
+  { role: "assistant", content: EX2_ASSISTANT },
+  { role: "user", content: EX3_USER },
+  { role: "assistant", content: EX3_ASSISTANT },
+  { role: "user", content: EX4_USER },
+  { role: "assistant", content: EX4_ASSISTANT },
+  { role: "user", content: EX5_USER },
+  { role: "assistant", content: EX5_ASSISTANT },
+];
+
 export async function messageToBugJson(params: {
   apiKey: string;
   model: string;
@@ -205,20 +245,23 @@ export async function messageToBugJson(params: {
 
   const userPayload = `Slack context (metadata only; do not invent details from ids alone):\n${params.slackMetadata}\n\n---\nSlack message to analyze:\n${params.messageText || "(empty message)"}`;
 
+  const extra =
+    typeof bugExamples.systemPromptExtra === "string"
+      ? bugExamples.systemPromptExtra.trim()
+      : "";
+  const systemContent =
+    SYSTEM_PROMPT +
+    (extra ? `\n\n## Org-specific QA instructions (from config/openai-bug-examples.json)\n${extra}\n` : "") +
+    adoConfiguredFieldsPromptBlock();
+
+  const backlog = backlogFewShotMessages();
+  const fewShot = backlog.length > 0 ? backlog : BUILTIN_FEW_SHOT;
+
   const completion = await client.beta.chat.completions.parse({
     model: params.model,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT + adoConfiguredFieldsPromptBlock() },
-      { role: "user", content: EX1_USER },
-      { role: "assistant", content: EX1_ASSISTANT },
-      { role: "user", content: EX2_USER },
-      { role: "assistant", content: EX2_ASSISTANT },
-      { role: "user", content: EX3_USER },
-      { role: "assistant", content: EX3_ASSISTANT },
-      { role: "user", content: EX4_USER },
-      { role: "assistant", content: EX4_ASSISTANT },
-      { role: "user", content: EX5_USER },
-      { role: "assistant", content: EX5_ASSISTANT },
+      { role: "system", content: systemContent },
+      ...fewShot,
       {
         role: "user",
         content: `Now analyze this message and return only the JSON object for the schema.\n\n${userPayload}`,

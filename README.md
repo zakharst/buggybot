@@ -14,7 +14,8 @@ buggybot/
 ├── .gitignore
 ├── config/
 │   ├── ado-bug-field-refs.defaults.json   # Default ref names for tabs / Reported from
-│   └── ado-bug-required-field-refs.json   # alwaysRequired refs snapshot (OpenAI prompt)
+│   ├── ado-bug-required-field-refs.json   # alwaysRequired refs snapshot (OpenAI prompt)
+│   └── openai-bug-examples.json           # systemPromptExtra + backlog few-shot (optional)
 ├── drizzle.config.ts
 ├── drizzle/
 │   └── 0000_init.sql          # Copy of schema for reference / manual apply
@@ -46,7 +47,7 @@ buggybot/
 │       ├── basic-auth.ts      # Parse & verify Basic header (Edge-safe)
 │       ├── errors.ts          # formatError()
 │       ├── logger.ts          # logEvent, logError → app_logs
-│       ├── openai-bug.ts      # Structured bug JSON
+│       ├── openai-bug.ts      # Structured bug JSON (+ openai-bug-examples.json few-shot)
 │       ├── settings-types.ts
 │       ├── settings.ts
 │       ├── slack-payload.ts
@@ -191,6 +192,12 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 1. **`npm run ado:inspect-bug-layout`** — For each value Buggybot sends (title, description, Repro Steps tab, System Info, Acceptance Criteria, Reported from, …), checks that **`referenceName` exists on your Bug type**. Shows ❌ where defaults in **`config/ado-bug-field-refs.defaults.json`** do not match your process → set the matching **`AZURE_DEVOPS_*_FIELD_REF`** env vars. Runtime resolution lives in **`src/lib/ado-bug-resolved-refs.ts`** + **`src/lib/azure-devops.ts`**.
 2. **`npm run ado:list-bug-fields`** — Prints **`alwaysRequired`** fields and a starter **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`** JSON (Area, Iteration, picklists).
 3. **`npm run ado:snapshot-required-field-refs`** — Refreshes **`config/ado-bug-required-field-refs.json`** bundled for the OpenAI intake prompt.
+
+**OpenAI — your real bugs as few-shot (bundled at build; no ADO call when users file from Slack):**
+
+1. Edit **`config/openai-bug-examples.json`** → **`systemPromptExtra`**: paste org-specific QA rules (tone, what to always capture, product names). Committed like code.
+2. **`npm run openai:snapshot-bug-examples`** — Pulls the **20** most recently changed Bugs (override count with **`OPENAI_BUG_EXAMPLES_COUNT`**), maps Title / Description / Repro Steps / System Info / Acceptance Criteria into `examples[]` for few-shot. Preserves existing **`systemPromptExtra`**. Re-run when you want fresher style anchors; **review before commit** if the repo is public (backlog text may be sensitive).
+3. If **`examples`** is empty, the app falls back to five built-in generic few-shot pairs in code.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
