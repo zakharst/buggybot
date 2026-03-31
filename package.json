@@ -5,15 +5,18 @@
   "description": "Slack→Azure DevOps bugs. Postgres via Vercel Marketplace Neon; DATABASE_URL is the only DB env var.",
   "scripts": {
     "dev": "next dev",
+    "db:push": "drizzle-kit push",
+    "db:push:ci": "drizzle-kit push --force",
+    "prebuild": "node scripts/vercel-db-push.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push"
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@slack/web-api": "^7.8.0",
+    "drizzle-kit": "^0.30.1",
     "drizzle-orm": "^0.36.4",
     "next": "^15.1.0",
     "openai": "^4.77.0",
@@ -27,7 +30,6 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
-    "drizzle-kit": "^0.30.1",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.1.0",
     "postcss": "^8.4.49",

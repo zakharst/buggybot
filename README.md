@@ -166,9 +166,7 @@ All delivery is **HTTP POST** to your deployed `/api/slack`. **No Socket Mode.**
    - Complete the flow; Vercel **automatically adds `DATABASE_URL`** to the project environment (pooled `postgresql://…` string).  
    - The application code uses **`process.env.DATABASE_URL` only**—no fallbacks to `POSTGRES_URL` or other names.
 
-5. **Apply schema on the Neon database** (once per environment):
-   - **Neon Console** → your project → **SQL Editor** → run `schema.sql`, or  
-   - Locally: `vercel env pull` then `psql "$DATABASE_URL" -f schema.sql` using the pulled value.
+5. **Database tables** — on each Vercel production build, `prebuild` runs `drizzle-kit push --force` against `DATABASE_URL` (see `scripts/vercel-db-push.mjs`), so tables are created or updated automatically. You can still run `schema.sql` manually in Neon **SQL Editor** if you prefer.
 
 6. **Environment Variables** — in Vercel → **Settings** → **Environment Variables**, add the **remaining** variables from **section 6** (`SLACK_*`, `OPENAI_*`, `AZURE_DEVOPS_*`, `ADMIN_BASIC_AUTH_*`, etc.). Do **not** replace `DATABASE_URL` unless you know what you’re doing—it should already be set by the Neon integration.
 
