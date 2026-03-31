@@ -125,6 +125,8 @@ Drizzle mirrors this in `src/db/schema.ts` for the app runtime.
 
 Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`** (same handler as legacy **`/api/slack`**). **No Socket Mode.**
 
+**Message shortcuts** (“On messages”) send `payload.type === "message_action"` (not `"shortcut"`). The app accepts **both** `message_action` and global `shortcut` payloads with callback ID **`create_azure_bug`**.
+
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
 
 2. **OAuth & Permissions** → **Scopes** → **Bot Token Scopes** — add:
@@ -174,7 +176,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 8. Deploy. In Slack, set **Interactivity Request URL** to the value shown in **Admin** (same as `APP_BASE_URL` + `/api/slack/interactions`).
 
-9. **Vercel** → **Project** → **Settings** → **Functions**: this app sets `maxDuration = 60` on the Slack API routes so the `after()` task (OpenAI + Azure DevOps) can finish.
+9. **Vercel** → **Project** → **Settings** → **Functions**: this app sets `maxDuration = 60` on the Slack API routes. Background work after the empty 200 ack uses **`waitUntil()`** from `@vercel/functions` so OpenAI + Azure DevOps + Slack replies still run on serverless (unlike relying on `after()` alone, which may not extend the invocation on all runtimes).
 
 ---
 
@@ -199,6 +201,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 |----------|-------------|
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
+| `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
@@ -220,7 +223,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 - **`logEvent(level, message, meta?)`** — writes to `app_logs` (failures fall back to `console.error`).
 - **`logError(message, err, meta?)`** — formats `err` with **`formatError`**, logs to DB + **stderr**.
-- **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; uses **`after()`** for the shortcut pipeline; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
+- **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; schedules the shortcut pipeline with **`waitUntil()`** after a fast 200 ack; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
 - **Shortcut pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
 
 ---
