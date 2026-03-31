@@ -202,12 +202,12 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
 | `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object** of field ref → value, applied on every create. **No WIQL or work-item fetch at create**—set this once in Vercel (or `.env`) and update when Area/Sprint/tags change. Keys for title, description, severity, and assignee are ignored. **Empty strings are dropped** (picklists reject them). **Discover fields:** `npm run ado:list-bug-fields`. |
-| `AZURE_DEVOPS_REPORTED_FROM` | If set, fills **`Custom.Reportedfrom`** when that field is missing or empty—use an **exact** picklist label from your process (see `ado:list-bug-fields`). Helps avoid **TF401320** on “Reported from”. |
+| `AZURE_DEVOPS_REPORTED_FROM` | Overrides the built-in default **`DT Team`** for **`Custom.Reportedfrom`** when that field is missing or empty. Value must match the picklist exactly (see `ado:list-bug-fields`). |
 | `AZURE_DEVOPS_REPORTED_FROM_FIELD_REF` | Optional override when the field reference is not `Custom.Reportedfrom`. |
 | `AZURE_DEVOPS_CREATE_EXTRA_PATCH` | Optional JSON array of extra `add` operations (applied **after** `REQUIRED_FIELD_VALUES`, so can override). Paths must start with `/fields/`. **Empty string values are skipped.** |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
-**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. For **“Reported from”**, either include **`Custom.Reportedfrom`** in that JSON with a valid option, or set **`AZURE_DEVOPS_REPORTED_FROM`** to the same string Azure shows in the work item form. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**. |
+**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT Team`** in code (`Custom.Reportedfrom`); override with **`AZURE_DEVOPS_REPORTED_FROM`** or JSON if your picklist label differs. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**. |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 

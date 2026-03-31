@@ -198,14 +198,13 @@ export async function createAzureBug(params: {
   const reportedFromRef =
     process.env.AZURE_DEVOPS_REPORTED_FROM_FIELD_REF?.trim() ||
     "Custom.Reportedfrom";
-  const reportedFromDefault = process.env.AZURE_DEVOPS_REPORTED_FROM?.trim();
-  if (reportedFromDefault) {
-    if (
-      mergedContext[reportedFromRef] === undefined ||
-      isEmptyAdoFieldValue(mergedContext[reportedFromRef])
-    ) {
-      mergedContext[reportedFromRef] = reportedFromDefault;
-    }
+  const reportedFromValue =
+    process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() || "DT Team";
+  if (
+    mergedContext[reportedFromRef] === undefined ||
+    isEmptyAdoFieldValue(mergedContext[reportedFromRef])
+  ) {
+    mergedContext[reportedFromRef] = reportedFromValue;
   }
 
   if (!("System.State" in mergedContext)) {
