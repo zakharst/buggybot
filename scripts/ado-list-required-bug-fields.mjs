@@ -210,6 +210,9 @@ async function main() {
   console.log(
     "Update Vercel env AZURE_DEVOPS_REQUIRED_FIELD_VALUES when Area/Sprint/tags change (no ADO query per bug).\n",
   );
+  console.log(
+    "OpenAI intake refs (committed JSON, one-shot ADO): npm run ado:snapshot-required-field-refs\n",
+  );
 }
 
 main().catch((e) => {

@@ -65,14 +65,6 @@ function parseAzureDevOpsRequiredFieldValuesMap(
   }
 }
 
-/** Reference names from `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` (for OpenAI intake prompt, logs). */
-export function listAzureDevOpsConfiguredFieldRefs(): string[] {
-  const m = parseAzureDevOpsRequiredFieldValuesMap(
-    process.env.AZURE_DEVOPS_REQUIRED_FIELD_VALUES,
-  );
-  return Object.keys(m).sort();
-}
-
 function fieldMapToPatchOps(m: Record<string, unknown>): Array<Record<string, string | unknown>> {
   return Object.entries(m).map(([refName, value]) => ({
     op: "add",

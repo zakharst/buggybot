@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { zodResponseFormat } from "openai/helpers/zod";
-import { listAzureDevOpsConfiguredFieldRefs } from "@/lib/azure-devops";
+import { loadAdoRequiredFieldRefsForPrompt } from "@/lib/ado-required-field-refs";
 
 /** QA-style Azure DevOps bug intake (strict JSON from model; description HTML built in app). */
 export const bugIntakeSchema = z.object({
@@ -80,12 +80,12 @@ Expected result guidance:
 Output only valid JSON.`;
 
 function adoConfiguredFieldsPromptBlock(): string {
-  const refs = listAzureDevOpsConfiguredFieldRefs();
+  const refs = loadAdoRequiredFieldRefsForPrompt();
   if (refs.length === 0) return "";
   const lines = refs.map((r) => `- ${r}`).join("\n");
   return `
 
-Azure DevOps — these work item field reference names are set on create from server configuration (env \`AZURE_DEVOPS_REQUIRED_FIELD_VALUES\`). They are not part of your JSON schema; the app applies them when filing the bug.
+Azure DevOps — these work item field reference names are always required on Bug in our process (snapshotted in repo config; no live API lookup during intake). Actual values are applied on create from server configuration (\`AZURE_DEVOPS_REQUIRED_FIELD_VALUES\`). They are not part of your JSON schema.
 ${lines}
 
 Rules for intake:

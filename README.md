@@ -202,10 +202,11 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
 | `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object** of field ref → value, applied on every create. **No WIQL or work-item fetch at create**—set this once in Vercel (or `.env`) and update when Area/Sprint/tags change. Keys for title, description, severity, and assignee are ignored. **Discover fields:** `npm run ado:list-bug-fields`. |
+| `AZURE_DEVOPS_REQUIRED_FIELD_REFS_PATH` | Optional path to JSON snapshot of `alwaysRequired` field refs for OpenAI (default **`config/ado-bug-required-field-refs.json`**). Regenerate locally with **`npm run ado:snapshot-required-field-refs`** (one ADO metadata call; **no ADO traffic** during Slack bug intake). Commit the file so deploys stay in sync. |
 | `AZURE_DEVOPS_CREATE_EXTRA_PATCH` | Optional JSON array of extra `add` operations (applied **after** `REQUIRED_FIELD_VALUES`, so can override). Paths must start with `/fields/`. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
-**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`** (one JSON object in env). **`npm run ado:list-bug-fields`** prints suggested keys and example values. For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`** adds raw patch ops after that map. |
+**Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`** (one JSON object in env). **`npm run ado:list-bug-fields`** prints suggested keys and example values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** so the OpenAI intake prompt lists process-required refs without calling ADO at runtime. For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`** adds raw patch ops after that map. |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
