@@ -208,7 +208,7 @@ async function main() {
     "\nTip: set Custom.Reportedfrom to a value from the allowed list above (e.g. DT team).",
   );
   console.log(
-    "Refresh deployed defaults: npm run ado:snapshot-template-bug (writes config/ado-bug-field-defaults.json; bot reads file, no ADO query per bug).\n",
+    "Update Vercel env AZURE_DEVOPS_REQUIRED_FIELD_VALUES when Area/Sprint/tags change (no ADO query per bug).\n",
   );
 }
 

@@ -13,8 +13,7 @@
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "ado:list-bug-fields": "node scripts/ado-list-required-bug-fields.mjs",
-    "ado:snapshot-template-bug": "node scripts/ado-snapshot-template-bug.mjs"
+    "ado:list-bug-fields": "node scripts/ado-list-required-bug-fields.mjs"
   },
   "dependencies": {
     "@slack/web-api": "^7.8.0",

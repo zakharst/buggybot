@@ -1,6 +1,3 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-
 function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
 }
@@ -36,7 +33,7 @@ function escapeHtml(s: string) {
     .replaceAll('"', "&quot;");
 }
 
-/** Fields this app already sets on create; skipped from file/env maps. */
+/** Fields this app already sets on create; skipped from env map. */
 const ADO_FIELDS_SET_BY_APP = new Set([
   "System.Title",
   "System.Description",
@@ -45,36 +42,7 @@ const ADO_FIELDS_SET_BY_APP = new Set([
 ]);
 
 /**
- * Static defaults from repo file (see `npm run ado:snapshot-template-bug`). No ADO call at create time.
- * Env AZURE_DEVOPS_FIELD_DEFAULTS_PATH: relative to cwd, default config/ado-bug-field-defaults.json
- */
-function loadAdoBugFieldDefaultsFile(): Record<string, unknown> {
-  const rel =
-    process.env.AZURE_DEVOPS_FIELD_DEFAULTS_PATH?.trim() ||
-    "config/ado-bug-field-defaults.json";
-  const abs = join(process.cwd(), rel);
-  if (!existsSync(abs)) return {};
-  try {
-    const raw = readFileSync(abs, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, unknown> = {};
-    for (const [refName, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (refName.startsWith("_")) continue;
-      if (typeof refName !== "string" || !refName.includes(".")) continue;
-      if (refName.length > 256) continue;
-      if (ADO_FIELDS_SET_BY_APP.has(refName)) continue;
-      if (value === undefined || value === null) continue;
-      out[refName] = value;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Optional map from env — merged after file defaults; overrides same keys.
+ * Optional JSON object in env: field ref → value. Set once in Vercel (no WIQL, no file read at create).
  */
 function parseAzureDevOpsRequiredFieldValuesMap(
   raw: string | undefined,
@@ -206,13 +174,10 @@ export async function createAzureBug(params: {
   const type = params.workItemType ?? "Bug";
   const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`;
 
-  const fileDefaults = loadAdoBugFieldDefaultsFile();
-  const requiredMap = parseAzureDevOpsRequiredFieldValuesMap(
-    process.env.AZURE_DEVOPS_REQUIRED_FIELD_VALUES,
-  );
   const mergedContext: Record<string, unknown> = {
-    ...fileDefaults,
-    ...requiredMap,
+    ...parseAzureDevOpsRequiredFieldValuesMap(
+      process.env.AZURE_DEVOPS_REQUIRED_FIELD_VALUES,
+    ),
   };
   if (!("System.State" in mergedContext)) {
     mergedContext["System.State"] = "New";
