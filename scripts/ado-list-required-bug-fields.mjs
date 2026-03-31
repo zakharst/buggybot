@@ -208,7 +208,7 @@ async function main() {
     "\nTip: set Custom.Reportedfrom to a value from the allowed list above (e.g. DT team).",
   );
   console.log(
-    "Runtime: set AZURE_DEVOPS_TEMPLATE_TAG=production (or your tag) to copy Area/Iteration/Custom fields from the latest tagged Bug instead of maintaining this JSON.\n",
+    "Refresh deployed defaults: npm run ado:snapshot-template-bug (writes config/ado-bug-field-defaults.json; bot reads file, no ADO query per bug).\n",
   );
 }
 
