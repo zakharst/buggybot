@@ -201,7 +201,11 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 |----------|-------------|
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
+| `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object**: field `referenceName` → `value` for create (Area Path, custom picklists, etc.). Keys for title, description, severity, and assignee are ignored (the app sets those). **Discover fields:** run `npm run ado:list-bug-fields` with `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` set (uses REST `workitemtypes/{type}/fields?$expand=All`). |
+| `AZURE_DEVOPS_CREATE_EXTRA_PATCH` | Optional JSON array of extra `add` operations (applied **after** `REQUIRED_FIELD_VALUES`, so can override). Paths must start with `/fields/`. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
+
+**Azure DevOps `TF401320` / required picklists (e.g. “Reported from”):** Process rules may require fields not set by the app. Run **`npm run ado:list-bug-fields`** locally (with org/project/PAT in the environment) to print `alwaysRequired` fields, sample `allowedValues`, and a ready **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES=`** line (includes **AreaPath** and **IterationPath** from classification + team settings when possible). Paste that into Vercel. Do not **`source .env`** in bash for this variable if the value starts with `{`—bash treats `{` as brace expansion; Next.js / Node `dotenv` load the file correctly. Some rules are not marked `alwaysRequired` in metadata; if create still fails, add the field via the same JSON object or `AZURE_DEVOPS_CREATE_EXTRA_PATCH`. |
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
