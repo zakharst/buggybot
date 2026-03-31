@@ -1,3 +1,10 @@
+import {
+  resolvedAcceptanceCriteriaFieldRef,
+  resolvedReportedFromFieldRef,
+  resolvedReproStepsFieldRef,
+  resolvedSystemInfoFieldRef,
+} from "@/lib/ado-bug-resolved-refs";
+
 function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
 }
@@ -270,9 +277,7 @@ export async function createAzureBug(params: {
   };
   dropEmptyAdoFieldValues(mergedContext);
 
-  const reportedFromRef =
-    process.env.AZURE_DEVOPS_REPORTED_FROM_FIELD_REF?.trim() ||
-    "Custom.Reportedfrom";
+  const reportedFromRef = resolvedReportedFromFieldRef();
   /** Exact picklist label from process (case-sensitive). ado:list-bug-fields lists allowed values. */
   const reportedFromValue =
     process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() || "DT team";
@@ -285,15 +290,9 @@ export async function createAzureBug(params: {
   const disableTcmTabs =
     process.env.AZURE_DEVOPS_DISABLE_TCM_TAB_FILL?.trim() === "1";
   if (!disableTcmTabs) {
-    const reproRef =
-      process.env.AZURE_DEVOPS_REPRO_STEPS_FIELD_REF?.trim() ||
-      "Microsoft.VSTS.TCM.ReproSteps";
-    const systemInfoRef =
-      process.env.AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF?.trim() ||
-      "Microsoft.VSTS.TCM.SystemInfo";
-    const acRef =
-      process.env.AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF?.trim() ||
-      "Microsoft.VSTS.Common.AcceptanceCriteria";
+    const reproRef = resolvedReproStepsFieldRef();
+    const systemInfoRef = resolvedSystemInfoFieldRef();
+    const acRef = resolvedAcceptanceCriteriaFieldRef();
     const skipAc =
       process.env.AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB?.trim() === "1";
     if (params.reproStepsHtml?.trim()) {

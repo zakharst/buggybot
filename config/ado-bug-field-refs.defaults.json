@@ -1,0 +1,6 @@
+{
+  "reproSteps": "Microsoft.VSTS.TCM.ReproSteps",
+  "systemInfo": "Microsoft.VSTS.TCM.SystemInfo",
+  "acceptanceCriteria": "Microsoft.VSTS.Common.AcceptanceCriteria",
+  "reportedFrom": "Custom.Reportedfrom"
+}

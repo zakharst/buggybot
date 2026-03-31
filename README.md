@@ -12,6 +12,9 @@ buggybot/
 ├── schema.sql                 # Standalone SQL (same tables as Drizzle)
 ├── .env.example
 ├── .gitignore
+├── config/
+│   ├── ado-bug-field-refs.defaults.json   # Default ref names for tabs / Reported from
+│   └── ado-bug-required-field-refs.json   # alwaysRequired refs snapshot (OpenAI prompt)
 ├── drizzle.config.ts
 ├── drizzle/
 │   └── 0000_init.sql          # Copy of schema for reference / manual apply
@@ -39,6 +42,7 @@ buggybot/
 │   └── lib/
 │       ├── assignment.ts      # Round-robin / random QA
 │       ├── azure-devops.ts    # REST: create Bug + comment
+│       ├── ado-bug-resolved-refs.ts  # Default Bug field refs (from config/*.json + env)
 │       ├── basic-auth.ts      # Parse & verify Basic header (Edge-safe)
 │       ├── errors.ts          # formatError()
 │       ├── logger.ts          # logEvent, logError → app_logs
@@ -181,6 +185,12 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 ---
 
 ## 6. Required environment variables
+
+**Azure DevOps — align your process with the bot (local, one PAT; not called when users create bugs from Slack):**
+
+1. **`npm run ado:inspect-bug-layout`** — For each value Buggybot sends (title, description, Repro Steps tab, System Info, Acceptance Criteria, Reported from, …), checks that **`referenceName` exists on your Bug type**. Shows ❌ where defaults in **`config/ado-bug-field-refs.defaults.json`** do not match your process → set the matching **`AZURE_DEVOPS_*_FIELD_REF`** env vars. Runtime resolution lives in **`src/lib/ado-bug-resolved-refs.ts`** + **`src/lib/azure-devops.ts`**.
+2. **`npm run ado:list-bug-fields`** — Prints **`alwaysRequired`** fields and a starter **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`** JSON (Area, Iteration, picklists).
+3. **`npm run ado:snapshot-required-field-refs`** — Refreshes **`config/ado-bug-required-field-refs.json`** bundled for the OpenAI intake prompt.
 
 | Variable | Required | Description |
 |----------|----------|-------------|

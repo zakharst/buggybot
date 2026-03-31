@@ -213,6 +213,9 @@ async function main() {
   console.log(
     "OpenAI intake refs (committed JSON, one-shot ADO): npm run ado:snapshot-required-field-refs\n",
   );
+  console.log(
+    "Map Buggybot create vs your Bug type (refs + layout): npm run ado:inspect-bug-layout\n",
+  );
 }
 
 main().catch((e) => {
