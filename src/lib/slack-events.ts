@@ -115,7 +115,12 @@ export function parseLadybugReactionContext(
 
   const item = ev.item;
   if (!isRecord(item)) return null;
-  if (item.type !== "message") return null;
+  if (
+    typeof item.type !== "string" ||
+    item.type.trim().toLowerCase() !== "message"
+  ) {
+    return null;
+  }
   const channelId = typeof item.channel === "string" ? item.channel : null;
   const messageTs = typeof item.ts === "string" ? item.ts : null;
   if (!channelId || !messageTs) return null;
@@ -210,13 +215,6 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
     messageTs: ctx.messageTs,
     userId: ctx.userId,
   });
-
-  void postEphemeralHint(
-    slack,
-    ctx.channelId,
-    ctx.userId,
-    ":hourglass_flowing_sand: *Buggybot* — Got your :ladybug: reaction. Progress updates will appear in the *thread* on this message.",
-  );
 
   const message = await fetchSlackMessageForBugShortcut(
     slack,
@@ -343,6 +341,21 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
       return new Response("", { status: 200 });
     }
 
+    /**
+     * Tell the user immediately inside Slack’s 3s window — before DB logging and background work.
+     * If only background ran, cold starts / waitUntil quirks could look like “nothing happened”.
+     */
+    const botToken = process.env.SLACK_BOT_TOKEN?.trim();
+    if (botToken) {
+      const slackEarly = new WebClient(botToken);
+      await postEphemeralHint(
+        slackEarly,
+        ladybugCtx.channelId,
+        ladybugCtx.userId,
+        ":hourglass_flowing_sand: *Buggybot* — Got your :ladybug: reaction. Progress updates will appear in the *thread* on this message.",
+      );
+    }
+
     await logEvent("info", "ladybug reaction: scheduling bug pipeline", {
       teamId: ladybugCtx.teamId,
       channelId: ladybugCtx.channelId,
@@ -362,7 +375,21 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
       }),
     );
     waitUntil(ladybugTask);
-    after(() => ladybugTask);
+    after(ladybugTask);
+  } else if (
+    process.env.SLACK_DEBUG_REACTIONS?.trim() === "1" &&
+    body.type === "event_callback" &&
+    isRecord(body.event) &&
+    body.event.type === "reaction_added"
+  ) {
+    const ev = body.event;
+    const item = isRecord(ev.item) ? ev.item : null;
+    await logEvent("info", "[slack-debug] reaction_added ignored (not a ladybug trigger)", {
+      reaction: typeof ev.reaction === "string" ? ev.reaction : null,
+      itemType: item && typeof item.type === "string" ? item.type : null,
+      allowedLadybugNames: getLadybugReactionNames(),
+      hint: "Set SLACK_LADYBUG_REACTION_NAMES to the API name Slack sends (see reaction field).",
+    });
   }
 
   return new Response("", { status: 200 });

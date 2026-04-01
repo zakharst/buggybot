@@ -55,6 +55,26 @@ describe("parseLadybugReactionContext", () => {
     });
   });
 
+  it("accepts item.type message case-insensitively", () => {
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        team_id: "T9",
+        event: {
+          type: "reaction_added",
+          user: "U42",
+          reaction: "ladybug",
+          item: { type: "MESSAGE", channel: "C7", ts: "1234.5678" },
+        },
+      }),
+    ).toEqual({
+      teamId: "T9",
+      channelId: "C7",
+      messageTs: "1234.5678",
+      userId: "U42",
+    });
+  });
+
   it("reads team id from team object when team_id missing", () => {
     expect(
       parseLadybugReactionContext({
