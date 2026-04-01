@@ -178,22 +178,34 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
     });
   }
 
+  /**
+   * One row per Slack `event_callback` so /admin shows whether **Event Subscriptions**
+   * hit this deploy at all. (Shortcuts use `/api/slack/interactions` — a different URL;
+   * they never produce these lines.)
+   */
   if (
     process.env.SLACK_DEBUG_REACTIONS?.trim() === "1" &&
     isRecord(body) &&
     body.type === "event_callback" &&
-    isRecord(body.event) &&
-    body.event.type === "reaction_added"
+    isRecord(body.event)
   ) {
     const ev = body.event;
+    const eventType = typeof ev.type === "string" ? ev.type : null;
     const item = isRecord(ev.item) ? ev.item : null;
-    await logEvent("info", "[slack-debug] reaction_added event", {
-      reaction: typeof ev.reaction === "string" ? ev.reaction : null,
-      itemType: item && typeof item.type === "string" ? item.type : null,
-      channel:
-        item && typeof item.channel === "string" ? item.channel : null,
-      allowedLadybugNames: getLadybugReactionNames(),
-    });
+    const meta: Record<string, unknown> = {
+      eventType,
+      hint: "If you only see shortcut logs, Slack is not POSTing to /api/slack/events — enable Event Subscriptions in the Slack app.",
+    };
+    if (eventType === "reaction_added") {
+      meta.reaction =
+        typeof ev.reaction === "string" ? ev.reaction : null;
+      meta.itemType =
+        item && typeof item.type === "string" ? item.type : null;
+      meta.channel =
+        item && typeof item.channel === "string" ? item.channel : null;
+      meta.allowedLadybugNames = getLadybugReactionNames();
+    }
+    await logEvent("info", "[slack-debug] Slack Events API event_callback", meta);
   }
 
   const ladybugCtx = parseLadybugReactionContext(body);

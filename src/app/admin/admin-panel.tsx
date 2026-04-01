@@ -217,13 +217,17 @@ export function AdminPanel(props: {
                 <code className="text-[var(--accent)]">APP_BASE_URL</code>.
               </span>
             )}
-            . No thread reply? Bot must be in the channel; subscribe{" "}
-            <code className="text-[var(--accent)]">reaction_added</code>; set{" "}
-            <code className="text-[var(--accent)]">SLACK_DEBUG_REACTIONS=1</code>{" "}
-            to log the real <code className="text-[var(--accent)]">reaction</code>{" "}
-            name (custom emoji →{" "}
-            <code className="text-[var(--accent)]">SLACK_LADYBUG_REACTION_NAMES</code>
-            ).
+            . <strong className="font-medium text-[var(--text)]">Reactions</strong> use
+            this URL only (not Interactivity). Shortcut logs in /admin never prove Events
+            work. With{" "}
+            <code className="text-[var(--accent)]">SLACK_DEBUG_REACTIONS=1</code>, look
+            for{" "}
+            <code className="text-[var(--accent)]">
+              [slack-debug] Slack Events API event_callback
+            </code>
+            . Bot in channel + <code className="text-[var(--accent)]">reaction_added</code>
+            ; custom emoji →{" "}
+            <code className="text-[var(--accent)]">SLACK_LADYBUG_REACTION_NAMES</code>.
           </p>
         </div>
         <p className="mt-3 text-xs text-[var(--muted)]">
