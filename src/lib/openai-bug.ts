@@ -14,11 +14,12 @@ export const bugIntakeSchema = z.object({
     .string()
     .transform((s) => s.trim().slice(0, 140)),
   environment: z.string(),
-  preconditions: z.array(z.string()).default([]),
-  steps_to_reproduce: z.array(z.string()).default([]),
+  /** Required arrays for structured-output JSON schema (use [] when empty). */
+  preconditions: z.array(z.string()),
+  steps_to_reproduce: z.array(z.string()),
   actual_result: z.string(),
   expected_result: z.string(),
-  notes: z.array(z.string()).default([]),
+  notes: z.array(z.string()),
   severity: z.string(),
   confidence: z.number().min(0).max(1),
 });
@@ -83,6 +84,10 @@ Expected result guidance:
   - actual: page crashes
   - expected: page should open normally
 
+Output contract:
+- Include every schema key in your JSON; use "" or [] where nothing applies—never omit keys.
+- Arrays must be JSON arrays (possibly empty), not null.
+
 Output only valid JSON.`;
 
 const REFINE_SYSTEM_PROMPT = `You are a QA editor refining a draft bug-intake JSON that was extracted from a Slack message.
@@ -103,9 +108,18 @@ Hard rules:
 
 Return the full JSON object matching the same schema as the draft.`;
 
+/** On by default for higher ADO quality; set OPENAI_BUG_REFINE_SECOND_PASS=0 to save ~one API call per bug. */
 function bugRefineSecondPassEnabled(): boolean {
   const v = process.env.OPENAI_BUG_REFINE_SECOND_PASS?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  if (
+    v === "0" ||
+    v === "false" ||
+    v === "no" ||
+    v === "off"
+  ) {
+    return false;
+  }
+  return true;
 }
 
 type BugExamplesJson = {
@@ -321,7 +335,7 @@ export async function messageToBugJson(params: {
 
   const completion = await client.beta.chat.completions.parse({
     model: params.model,
-    temperature: 0.25,
+    temperature: 0.2,
     messages: [
       { role: "system", content: systemContent },
       ...fewShot,
@@ -341,7 +355,7 @@ export async function messageToBugJson(params: {
   if (bugRefineSecondPassEnabled()) {
     const refineCompletion = await client.beta.chat.completions.parse({
       model: params.model,
-      temperature: 0.15,
+      temperature: 0.1,
       messages: [
         {
           role: "system",

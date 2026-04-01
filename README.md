@@ -217,7 +217,8 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 | Variable | Description |
 |----------|-------------|
-| `OPENAI_MODEL` | Default model if not set in admin (default in code: `gpt-4o-mini`) |
+| `OPENAI_MODEL` | Default model if not set in admin (default in code: **`gpt-4o`**) |
+| `OPENAI_BUG_REFINE_SECOND_PASS` | Set to **`0`** / **`false`** / **`off`** to skip the second polish pass (default: **on**, better ADO text, ~2× OpenAI calls per bug) |
 | `OPENAI_BACKLOG_EXAMPLES_MD` | Optional path (relative to cwd) to a markdown file of real bugs; default **`config/openai-bug-backlog-examples.md`**. |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
 | `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object** of field ref → value, applied on every create. **No WIQL or work-item fetch at create**—set this once in Vercel (or `.env`) and update when Area/Sprint/tags change. Keys for title, description, severity, and assignee are ignored. **Empty strings are dropped** (picklists reject them). **Discover fields:** `npm run ado:list-bug-fields`. |

@@ -7,6 +7,7 @@ import { getSettings, saveSettings } from "@/lib/settings";
 import { z } from "zod";
 import {
   assignmentModeSchema,
+  DEFAULT_OPENAI_MODEL,
   settingsPayloadSchema,
   type SettingsPayload,
 } from "@/lib/settings-types";
@@ -72,7 +73,7 @@ export async function saveAdminSettingsAction(
   const partial: Partial<SettingsPayload> = {
     adoOrg: adoOrg || undefined,
     adoProject: adoProject || undefined,
-    openaiModel: openaiModel || "gpt-4o-mini",
+    openaiModel: openaiModel || DEFAULT_OPENAI_MODEL,
     qaEmails,
     assignmentMode: mode.data,
     automationEnabled,
