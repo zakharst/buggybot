@@ -584,33 +584,43 @@ export async function createAzureBug(params: {
     }
   }
 
-  const iterationTeam =
-    wd?.iterationTeamName?.trim() ||
-    process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim();
-  if (iterationTeam) {
-    const iterationPath = await fetchTeamCurrentIterationPath({
-      org: params.org,
-      project: params.project,
-      pat: params.pat,
-      teamName: iterationTeam,
-    });
-    if (iterationPath) {
-      mergedContext["System.IterationPath"] = iterationPath;
-    } else {
-      /**
-       * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` often pins an old sprint; if Team Settings API
-       * returns no current iteration, keeping that stale path causes TF401347.
-       */
-      delete mergedContext["System.IterationPath"];
-      await logEvent(
-        "warn",
-        "ADO: iteration team configured but no current sprint from API; removed System.IterationPath (was possibly stale from REQUIRED_FIELD_VALUES)",
-        { iterationTeam, org: params.org, project: params.project },
-      );
+  /**
+   * Omit `System.IterationPath` entirely so Azure DevOps / process template defaults apply.
+   * Same effect as `AZURE_DEVOPS_OMIT_ITERATION_PATH` — friendlier name.
+   */
+  const skipIterationPath =
+    process.env.AZURE_DEVOPS_OMIT_ITERATION_PATH?.trim() === "1" ||
+    process.env.AZURE_DEVOPS_DEFAULT_ITERATION?.trim() === "1";
+
+  if (!skipIterationPath) {
+    const iterationTeam =
+      wd?.iterationTeamName?.trim() ||
+      process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim();
+    if (iterationTeam) {
+      const iterationPath = await fetchTeamCurrentIterationPath({
+        org: params.org,
+        project: params.project,
+        pat: params.pat,
+        teamName: iterationTeam,
+      });
+      if (iterationPath) {
+        mergedContext["System.IterationPath"] = iterationPath;
+      } else {
+        /**
+         * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` often pins an old sprint; if Team Settings API
+         * returns no current iteration, keeping that stale path causes TF401347.
+         */
+        delete mergedContext["System.IterationPath"];
+        await logEvent(
+          "warn",
+          "ADO: iteration team configured but no current sprint from API; removed System.IterationPath (was possibly stale from REQUIRED_FIELD_VALUES)",
+          { iterationTeam, org: params.org, project: params.project },
+        );
+      }
     }
   }
 
-  if (process.env.AZURE_DEVOPS_OMIT_ITERATION_PATH?.trim() === "1") {
+  if (skipIterationPath) {
     delete mergedContext["System.IterationPath"];
   }
 
