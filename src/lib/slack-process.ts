@@ -6,8 +6,6 @@ import {
   appendSlackSourceToDescriptionHtml,
   buildAdoAcceptanceCriteriaHtml,
   buildAdoDescriptionWithSlackFallback,
-  buildAdoTcmReproStepsHtml,
-  buildAdoTcmSystemInfoHtml,
   buildSlackBugDeploymentMetaHtml,
   buildSlackMediaEmbedsHtml,
   createAzureBug,
@@ -516,31 +514,22 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
-      const descriptionBodyHtml =
-        buildSlackBugDeploymentMetaHtml() +
-        buildAdoDescriptionWithSlackFallback(
-          {
-            deployment_environment: parsed.deployment_environment,
-            platform: parsed.platform,
-            preconditions: parsed.preconditions,
-            stepsToReproduce: parsed.steps_to_reproduce,
-            actualResult: parsed.actual_result,
-            expectedResult: parsed.expected_result,
-            notes: parsed.notes,
-          },
-          messageText,
-        );
-
-      const reproStepsHtmlBase = buildAdoTcmReproStepsHtml(
-        parsed.steps_to_reproduce,
-        parsed.actual_result,
+      /** Same body as existing Digital-Services bugs (Repro Steps export); Description adds meta + Slack footer. */
+      const structuredBugBody = buildAdoDescriptionWithSlackFallback(
+        {
+          deployment_environment: parsed.deployment_environment,
+          platform: parsed.platform,
+          preconditions: parsed.preconditions,
+          stepsToReproduce: parsed.steps_to_reproduce,
+          actualResult: parsed.actual_result,
+          expectedResult: parsed.expected_result,
+          notes: parsed.notes,
+        },
+        messageText,
       );
-      const systemInfoHtml = buildAdoTcmSystemInfoHtml({
-        deployment_environment: parsed.deployment_environment,
-        platform: parsed.platform,
-        preconditions: parsed.preconditions,
-        notes: parsed.notes,
-      });
+
+      const descriptionBodyHtml =
+        buildSlackBugDeploymentMetaHtml() + structuredBugBody;
       const acceptanceCriteriaHtml = buildAdoAcceptanceCriteriaHtml(
         parsed.expected_result,
       );
@@ -681,8 +670,8 @@ export async function processCreateAzureBugShortcut(
         const mediaEmbedHtml = buildSlackMediaEmbedsHtml(adoMediaLinked);
         const reproStepsHtmlForCreate =
           !disableTcmTabs && mediaEmbedHtml
-            ? reproStepsHtmlBase + mediaEmbedHtml
-            : reproStepsHtmlBase;
+            ? structuredBugBody + mediaEmbedHtml
+            : structuredBugBody;
         const descriptionBodyForCreate =
           disableTcmTabs && mediaEmbedHtml
             ? descriptionBodyHtml + mediaEmbedHtml
@@ -714,7 +703,6 @@ export async function processCreateAzureBugShortcut(
           assigneeEmail: assigneeResult.email,
           appendTags: [...appendTags],
           reproStepsHtml: reproStepsHtmlForCreate,
-          systemInfoHtml,
           acceptanceCriteriaHtml,
           workItemDefaults: Object.keys(wd).length > 0 ? wd : undefined,
         });

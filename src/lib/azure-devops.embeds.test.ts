@@ -12,9 +12,8 @@ describe("buildSlackMediaEmbedsHtml", () => {
     ]);
     expect(html).toContain("<img ");
     expect(html).toContain("slack-shot.png");
-    expect(html).toContain("Screenshots and media (Slack)");
-    expect(html).toContain("Open attachments in Azure DevOps");
-    expect(html).toContain("<ul>");
+    expect(html).toContain("Screenshot(s) from Slack (attached).");
+    expect(html).not.toContain("<ul>");
   });
 
   it("adds video link for mp4", () => {
@@ -25,7 +24,7 @@ describe("buildSlackMediaEmbedsHtml", () => {
         contentType: "application/octet-stream",
       },
     ]);
-    expect(html).toContain("Video:");
+    expect(html).toContain("Video is attached");
     expect(html).toContain("href=");
   });
 
@@ -39,6 +38,6 @@ describe("buildSlackMediaEmbedsHtml", () => {
     ]);
     expect(html).toContain("href=");
     expect(html).toContain("notes.txt");
-    expect(html).toContain("could not be inlined");
+    expect(html).toContain("See attached");
   });
 });

@@ -205,6 +205,88 @@ function parseAzureDevOpsCreateExtraPatch(
 export const ADO_DESCRIPTION_EMPTY_MARKER =
   "(No description details were present in the Slack message.)";
 
+/** Params for {@link buildAdoDigitalServicesReproHtml} (matches Digital-Services backlog habit). */
+export type AdoDigitalServicesReproParams = {
+  deployment_environment: string;
+  platform: string;
+  preconditions: string[];
+  stepsToReproduce: string[];
+  actualResult: string;
+  expectedResult: string;
+  notes: string[];
+};
+
+/**
+ * Repro Steps / Description body in the same shape as existing Digital-Services bugs (500+ WI export):
+ * `Env: …`, `Preconditions:` + `•` lines, `Steps:` + `•` lines, `Actual result:`, `Expected result:`, optional `Notes:`.
+ */
+export function buildAdoDigitalServicesReproHtml(
+  params: AdoDigitalServicesReproParams,
+): string {
+  const chunks: string[] = [];
+
+  const dep = params.deployment_environment.trim().toLowerCase();
+  const plat = params.platform.trim();
+  const envBits: string[] = [];
+  if (dep === "dev" || dep === "prod") envBits.push(dep);
+  if (plat) envBits.push(plat);
+  if (envBits.length) {
+    chunks.push(`<p>${escapeHtml(`Env: ${envBits.join(", ")}`)}</p>`);
+  }
+
+  const pre = params.preconditions.map((p) => p.trim()).filter(Boolean);
+  if (pre.length) {
+    chunks.push("<p>Preconditions:</p>");
+    for (const p of pre) {
+      chunks.push(`<p>${escapeHtml(`• ${p}`)}</p>`);
+    }
+  }
+
+  const steps = params.stepsToReproduce.map((s) => s.trim()).filter(Boolean);
+  if (steps.length) {
+    chunks.push("<p>Steps:</p>");
+    for (const s of steps) {
+      chunks.push(`<p>${escapeHtml(`• ${s}`)}</p>`);
+    }
+  }
+
+  const actual = params.actualResult.trim();
+  if (actual) {
+    chunks.push("<p>Actual result:</p>");
+    const actualLines = actual
+      .split(/\r?\n/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (actualLines.length <= 1) {
+      chunks.push(`<p>${escapeHtml(actualLines[0] ?? actual)}</p>`);
+    } else {
+      for (const line of actualLines) {
+        chunks.push(`<p>${escapeHtml(`• ${line}`)}</p>`);
+      }
+    }
+  }
+
+  const expected = params.expectedResult.trim();
+  if (expected) {
+    chunks.push("<p>Expected result:</p>");
+    chunks.push(`<p>${escapeHtml(expected)}</p>`);
+  }
+
+  const notes = params.notes.map((n) => n.trim()).filter(Boolean);
+  if (notes.length) {
+    chunks.push("<p>Notes:</p>");
+    for (const n of notes) {
+      chunks.push(`<p>${escapeHtml(`• ${n}`)}</p>`);
+    }
+  }
+
+  const html = chunks.join("");
+  if (!html) {
+    return `<p><i>${escapeHtml(ADO_DESCRIPTION_EMPTY_MARKER)}</i></p>`;
+  }
+  return html;
+}
+
 /**
  * Azure DevOps bug description in project QA layout (plain structure; minimal HTML wrapper for ADO).
  * Omits empty sections; no N/A or placeholders. Slack permalink is appended via {@link appendSlackSourceToDescriptionHtml}.
@@ -319,23 +401,23 @@ export function appendSlackSourceToDescriptionHtml(
   return base + buildSlackSourceFooterHtml(params);
 }
 
-/** Maps AI steps (and optional actual) to the Bug “Repro Steps” tab (HTML). */
+/**
+ * Maps AI steps (and optional actual) to the Bug “Repro Steps” tab (HTML).
+ * Prefer {@link buildAdoDigitalServicesReproHtml} with full structured fields for backlog-consistent layout.
+ */
 export function buildAdoTcmReproStepsHtml(
   steps: string[],
   actualResult?: string,
 ): string {
-  const s = steps.map((x) => x.trim()).filter(Boolean);
-  const actual = actualResult?.trim() ?? "";
-  if (s.length) {
-    const items = s.map((line) => `<li>${escapeHtml(line)}</li>`).join("");
-    let html = `<ol>${items}</ol>`;
-    if (actual) {
-      html += `<p><b>Actual result:</b> ${escapeHtml(actual)}</p>`;
-    }
-    return html;
-  }
-  if (actual) return `<p>${escapeHtml(actual)}</p>`;
-  return "";
+  return buildAdoDigitalServicesReproHtml({
+    deployment_environment: "",
+    platform: "",
+    preconditions: [],
+    stepsToReproduce: steps,
+    actualResult: actualResult ?? "",
+    expectedResult: "",
+    notes: [],
+  });
 }
 
 /** Maps env / preconditions / notes to the Bug “System Info” tab (HTML). */
@@ -379,10 +461,10 @@ export function buildAdoAcceptanceCriteriaHtml(expectedResult: string): string {
  * so the work item is not blank in ADO layouts that hide System.Description.
  */
 export function buildAdoDescriptionWithSlackFallback(
-  params: Parameters<typeof buildAdoQaBugDescriptionHtml>[0],
+  params: AdoDigitalServicesReproParams,
   rawSlackMessage: string,
 ): string {
-  const base = buildAdoQaBugDescriptionHtml(params);
+  const base = buildAdoDigitalServicesReproHtml(params);
   const raw = rawSlackMessage.trim();
   if (raw && base.includes(ADO_DESCRIPTION_EMPTY_MARKER)) {
     const clipped = raw.length > 12000 ? `${raw.slice(0, 12000)}…` : raw;
@@ -753,6 +835,8 @@ export async function attachMediaDownloadsToWorkItem(params: {
 /**
  * Inline Slack screenshots (and video links) into HTML fields (`System.Description` and/or
  * `Microsoft.VSTS.TCM.ReproSteps`). Call only after each `url` exists (upload response).
+ *
+ * Wording matches Digital-Services backlog habit (“Video is attached …”, short intro, no extra link list).
  */
 export function buildSlackMediaEmbedsHtml(
   linked: Array<{ url: string; fileName: string; contentType: string }>,
@@ -777,10 +861,14 @@ export function buildSlackMediaEmbedsHtml(
 
   if (!imgs.length && !vids.length && !rest.length) return "";
 
-  const parts = [
-    '<hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>',
-    "<p><b>Screenshots and media (Slack)</b></p>",
-  ];
+  const parts: string[] = [];
+  if (imgs.length) {
+    parts.push(
+      "<p><i>Screenshot(s) from Slack (attached).</i></p>",
+    );
+  } else if (vids.length || rest.length) {
+    parts.push("<p><i>See attached from Slack.</i></p>");
+  }
   for (const x of imgs) {
     const src = escapeHtmlAttr(x.url);
     const alt = escapeHtmlAttr(x.fileName);
@@ -792,31 +880,15 @@ export function buildSlackMediaEmbedsHtml(
     const href = escapeHtmlAttr(x.url);
     const label = escapeHtml(x.fileName);
     parts.push(
-      `<p><b>Video:</b> <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></p>`,
+      `<p>Video is attached <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></p>`,
     );
   }
   for (const x of rest) {
     const href = escapeHtmlAttr(x.url);
     const label = escapeHtml(x.fileName);
     parts.push(
-      `<p><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a> <i>(open attachment — type could not be inlined as image/video)</i></p>`,
+      `<p>See attached <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></p>`,
     );
-  }
-
-  /** Boards often hide broken <img> (no auth on subresource); links always work when signed in. */
-  if (linked.length) {
-    parts.push(
-      '<p><b>Open attachments in Azure DevOps</b> <i>(if previews above are blank)</i></p>',
-    );
-    parts.push("<ul>");
-    for (const x of linked) {
-      const href = escapeHtmlAttr(x.url);
-      const label = escapeHtml(x.fileName);
-      parts.push(
-        `<li><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></li>`,
-      );
-    }
-    parts.push("</ul>");
   }
 
   return parts.join("");
