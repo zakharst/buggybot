@@ -3,9 +3,11 @@ import { waitUntil } from "@vercel/functions";
 import { after } from "next/server";
 import { logError, logEvent } from "@/lib/logger";
 import {
+  LADYBUG_THREAD_PROGRESS_HEADER,
   processCreateAzureBugShortcut,
   SLACK_SHORTCUT_CALLBACK_ID,
 } from "@/lib/slack-process";
+import { formatProgressStepsMrkdwn } from "@/lib/slack-bug-modal";
 import { verifySlackRequest } from "@/lib/slack-verify";
 import { fetchSlackMessageForBugShortcut } from "@/lib/slack-fetch-message";
 import type { SlackBugShortcutPayload } from "@/lib/slack-payload";
@@ -159,6 +161,38 @@ async function postEphemeralHint(
   }
 }
 
+/** First thread line so the channel sees activity before DB/OpenAI (Slack `thread_ts` = root of thread). */
+async function postLadybugThreadKickoff(
+  slack: WebClient,
+  channelId: string,
+  threadTs: string,
+): Promise<string | null> {
+  const text = `${LADYBUG_THREAD_PROGRESS_HEADER}*Progress*\n${formatProgressStepsMrkdwn({
+    validate: "active",
+    ai: "pending",
+    ado: "pending",
+    finalize: "pending",
+  })}`;
+  try {
+    const r = await slack.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text,
+    });
+    if (!r.ok || !r.ts) {
+      await logEvent("warn", "ladybug: kickoff postMessage failed or missing ts", {
+        channelId,
+        error: r.error,
+      });
+      return null;
+    }
+    return r.ts;
+  } catch (e) {
+    await logError("ladybug: kickoff chat.postMessage failed", e, { channelId });
+    return null;
+  }
+}
+
 async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
@@ -176,6 +210,13 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
     messageTs: ctx.messageTs,
     userId: ctx.userId,
   });
+
+  void postEphemeralHint(
+    slack,
+    ctx.channelId,
+    ctx.userId,
+    ":hourglass_flowing_sand: *Buggybot* — Got your :ladybug: reaction. Progress updates will appear in the *thread* on this message.",
+  );
 
   const message = await fetchSlackMessageForBugShortcut(
     slack,
@@ -197,10 +238,18 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
     return;
   }
 
+  const parentThreadTs = message.thread_ts ?? message.ts;
+  const kickoffTs = await postLadybugThreadKickoff(
+    slack,
+    ctx.channelId,
+    parentThreadTs,
+  );
+
   const payload = buildShortcutPayloadFromLadybugReaction(ctx, message);
   try {
     await processCreateAzureBugShortcut(payload, null, {
       triggerSource: "ladybug_reaction",
+      initialLadybugThreadTs: kickoffTs,
     });
   } catch (e) {
     await logError("ladybug pipeline: processCreateAzureBugShortcut threw", e, {

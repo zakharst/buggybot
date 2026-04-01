@@ -161,7 +161,8 @@ async function tryFinalThreadReply(
   }
 }
 
-const LADYBUG_THREAD_PROGRESS_HEADER =
+/** Shown at the top of ladybug thread progress posts (reaction trigger). */
+export const LADYBUG_THREAD_PROGRESS_HEADER =
   ":ladybug: *Azure DevOps bug* — _Slack cannot open the progress window for emoji reactions; updates appear in this thread._\n\n";
 
 async function showProgress(
@@ -300,7 +301,11 @@ export type BugShortcutTriggerSource = "shortcut" | "ladybug_reaction";
 export async function processCreateAzureBugShortcut(
   payload: SlackBugShortcutPayload,
   modalSync: ModalSync | null,
-  opts?: { triggerSource?: BugShortcutTriggerSource },
+  opts?: {
+    triggerSource?: BugShortcutTriggerSource;
+    /** First thread status message already posted (e.g. instant kickoff); `showProgress` updates it. */
+    initialLadybugThreadTs?: string | null;
+  },
 ) {
   const triggerSource = opts?.triggerSource ?? "shortcut";
   slackInteractionDiag({
@@ -337,7 +342,7 @@ export async function processCreateAzureBugShortcut(
   const ctx: ShortcutCtx = { teamId, channelId, threadTs, messageTs };
   const threadProgress: ThreadProgressHandle | null =
     triggerSource === "ladybug_reaction"
-      ? { channelId, ts: null }
+      ? { channelId, ts: opts?.initialLadybugThreadTs?.trim() || null }
       : null;
   const messageText = extractMessageText(message);
   if (dbg) {
