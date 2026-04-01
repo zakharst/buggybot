@@ -11,6 +11,7 @@ import {
   inferSlackFileContentType,
   slackHostedFileLooksLikeImageOrVideo,
 } from "@/lib/slack-file-media-utils";
+import { formatError } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
 
 /** Prefer download URL (works with bot token + files:read). */
@@ -19,14 +20,93 @@ function slackFileDownloadUrl(f: FileElement): string | undefined {
   return u || undefined;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object";
+}
+
+/** Coerce Slack interaction `message.files` entries into file-shaped objects. */
+function fileElementsFromInteractionPayload(
+  raw: unknown[] | undefined,
+): FileElement[] {
+  if (!raw?.length) return [];
+  const out: FileElement[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    out.push(item as unknown as FileElement);
+  }
+  return out;
+}
+
 /**
- * Loads the Slack message that triggered the shortcut so we get `files` (not always in the interaction payload).
+ * Merge interaction payload files with conversation API files (same id → API fills
+ * `url_private*` when history omits them; payload-only ids still work with files.info).
+ */
+function mergeInteractionAndApiFileElements(
+  fromInteraction: FileElement[],
+  fromApi: FileElement[],
+): FileElement[] {
+  const map = new Map<string, FileElement>();
+  for (const f of fromApi) {
+    const id = f.id != null ? String(f.id) : "";
+    if (id) map.set(id, { ...f });
+  }
+  for (const f of fromInteraction) {
+    const id = f.id != null ? String(f.id) : "";
+    if (id) {
+      const prev = map.get(id);
+      map.set(id, { ...f, ...(prev ?? {}) } as FileElement);
+    }
+  }
+  return [...map.values()];
+}
+
+async function enrichFileElementsWithFilesInfo(
+  slack: WebClient,
+  files: FileElement[],
+): Promise<FileElement[]> {
+  const out: FileElement[] = [];
+  for (const f of files) {
+    if (slackFileDownloadUrl(f)) {
+      out.push(f);
+      continue;
+    }
+    const fid = f.id != null ? String(f.id) : "";
+    if (!fid) {
+      out.push(f);
+      continue;
+    }
+    try {
+      const r = await slack.files.info({ file: fid });
+      if (r.ok && r.file) {
+        out.push({ ...f, ...r.file } as FileElement);
+      } else {
+        void logEvent("warn", "Slack files.info failed (no download URL on file row)", {
+          fileId: fid,
+          error: r.error ?? "unknown",
+        });
+        out.push(f);
+      }
+    } catch (e) {
+      void logEvent("warn", "Slack files.info threw", {
+        fileId: fid,
+        error: formatError(e),
+      });
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/**
+ * Loads hosted image/video file rows for a message: conversation API + optional
+ * interaction `message.files`, then `files.info` when private URLs are missing.
  */
 export async function fetchImageAndVideoFilesForSlackMessage(
   slack: WebClient,
   channelId: string,
   messageTs: string,
   threadTs: string,
+  interactionMessageFiles?: unknown[],
 ): Promise<FileElement[]> {
   const isThreadReply = threadTs !== messageTs;
   let msg: MessageElement | undefined;
@@ -36,6 +116,7 @@ export async function fetchImageAndVideoFilesForSlackMessage(
       channel: channelId,
       ts: threadTs,
       limit: 200,
+      include_all_metadata: true,
     });
     if (!res.ok) {
       void logEvent("warn", "Slack conversations.replies failed (media fetch)", {
@@ -55,6 +136,7 @@ export async function fetchImageAndVideoFilesForSlackMessage(
       oldest: messageTs,
       inclusive: true,
       limit: 1,
+      include_all_metadata: true,
     });
     if (!h.ok) {
       void logEvent("warn", "Slack conversations.history failed (media fetch)", {
@@ -71,6 +153,7 @@ export async function fetchImageAndVideoFilesForSlackMessage(
         channel: channelId,
         ts: messageTs,
         limit: 200,
+        include_all_metadata: true,
       });
       if (!r.ok) {
         void logEvent("warn", "Slack conversations.replies fallback failed (media fetch)", {
@@ -86,27 +169,50 @@ export async function fetchImageAndVideoFilesForSlackMessage(
   }
 
   if (!msg) {
-    void logEvent("warn", "Slack media: no message row for ts (cannot read files)", {
+    void logEvent("warn", "Slack media: no message row for ts — trying interaction files only", {
       channelId,
       messageTs,
       threadTs,
     });
-    return [];
+    let only = fileElementsFromInteractionPayload(
+      interactionMessageFiles,
+    ).filter((f) => slackHostedFileLooksLikeImageOrVideo(f as FileElement));
+    if (!only.length) {
+      return [];
+    }
+    only = await enrichFileElementsWithFilesInfo(slack, only);
+    return only.filter((f) =>
+      slackHostedFileLooksLikeImageOrVideo(f as FileElement),
+    );
   }
 
-  const files = msg.files;
-  if (!Array.isArray(files) || !files.length) {
-    return [];
-  }
-  const media = files.filter((f) =>
+  const fromApiRaw = Array.isArray(msg.files) ? (msg.files as FileElement[]) : [];
+  const fromInteraction = fileElementsFromInteractionPayload(
+    interactionMessageFiles,
+  );
+  const merged = mergeInteractionAndApiFileElements(
+    fromInteraction,
+    fromApiRaw,
+  );
+
+  let media = merged.filter((f) =>
     slackHostedFileLooksLikeImageOrVideo(f as FileElement),
   );
-  if (files.length > 0 && media.length === 0) {
+
+  const needsInfo = media.some((f) => !slackFileDownloadUrl(f));
+  if (needsInfo) {
+    media = await enrichFileElementsWithFilesInfo(slack, media);
+    media = media.filter((f) =>
+      slackHostedFileLooksLikeImageOrVideo(f as FileElement),
+    );
+  }
+
+  if (merged.length > 0 && media.length === 0) {
     void logEvent("warn", "Slack media: message has files but none treated as image/video", {
       channelId,
       messageTs,
-      count: files.length,
-      sample: files.slice(0, 4).map((f) => ({
+      count: merged.length,
+      sample: merged.slice(0, 4).map((f) => ({
         mimetype: f.mimetype,
         filetype: f.filetype,
         name: (f.name || f.title || "").slice(0, 80),
@@ -114,6 +220,19 @@ export async function fetchImageAndVideoFilesForSlackMessage(
       })),
     });
   }
+
+  if (
+    media.length === 0 &&
+    (fromInteraction.length > 0 || fromApiRaw.length > 0)
+  ) {
+    void logEvent("info", "Slack media: zero image/video after merge+files.info", {
+      channelId,
+      messageTs,
+      interactionFileCount: fromInteraction.length,
+      apiFileCount: fromApiRaw.length,
+    });
+  }
+
   return media as FileElement[];
 }
 
@@ -173,6 +292,8 @@ export async function collectSlackMessageMediaDownloads(params: {
   threadTs: string;
   maxBytesPerFile: number;
   maxFiles: number;
+  /** From Slack shortcut `message.files` — often populated when history is not. */
+  interactionMessageFiles?: unknown[];
 }): Promise<{ downloads: SlackMediaDownload[]; skipped: string[] }> {
   const skipped: string[] = [];
   const adoCap = adoMaxAttachmentBytesPerFile();
@@ -188,6 +309,7 @@ export async function collectSlackMessageMediaDownloads(params: {
     params.channelId,
     params.messageTs,
     params.threadTs,
+    params.interactionMessageFiles,
   );
 
   const seen = new Set<string>();

@@ -102,6 +102,50 @@ describe("collectSlackMessageMediaDownloads", () => {
     globalThis.fetch = origFetch;
   });
 
+  it("uses interaction message.files + files.info when history has no files", async () => {
+    const slack = {
+      conversations: {
+        history: vi.fn().mockResolvedValue({
+          ok: true,
+          messages: [{ ts: "1.0", files: [] }],
+        }),
+        replies: vi.fn(),
+      },
+      files: {
+        info: vi.fn().mockResolvedValue({
+          ok: true,
+          file: {
+            id: "Fabc",
+            name: "screen.png",
+            mimetype: "image/png",
+            filetype: "png",
+            size: 4,
+            url_private_download: "https://files.slack.com/pri/screen.png",
+            is_external: false,
+          },
+        }),
+      },
+    } as unknown as WebClient;
+
+    const files = await fetchImageAndVideoFilesForSlackMessage(
+      slack,
+      "C",
+      "1.0",
+      "1.0",
+      [
+        {
+          id: "Fabc",
+          name: "screen.png",
+          filetype: "png",
+          is_external: false,
+        },
+      ],
+    );
+
+    expect(files).toHaveLength(1);
+    expect(slack.files.info).toHaveBeenCalledWith({ file: "Fabc" });
+  });
+
   it("downloads recognized files and infers image/png", async () => {
     const slack = {
       conversations: {

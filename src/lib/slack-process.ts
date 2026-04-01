@@ -161,6 +161,7 @@ async function showSuccess(
   url: string,
   assigneeEmail: string | undefined,
   mediaAttachedCount?: number,
+  opts?: { hintWhenMediaExpectedButNone?: boolean },
 ) {
   if (modalSync) {
     await showProgress(
@@ -186,10 +187,14 @@ async function showSuccess(
     typeof mediaAttachedCount === "number" && mediaAttachedCount > 0
       ? ` _(${mediaAttachedCount} image/video file(s) attached in ADO)_`
       : "";
+  const mediaHint =
+    opts?.hintWhenMediaExpectedButNone === true
+      ? "\n\n:information_source: _No screenshots/videos were attached. Use an uploaded file on the message (not only a Block Kit image), invite the bot to this channel, add/reinstall with `files:read` + `channels:history` / `groups:history`, then check /admin logs if it persists._"
+      : "";
   await tryFinalThreadReply(
     slack,
     ctx,
-    `:white_check_mark: Azure DevOps Bug *#${workItemId}* created${assign} — ${url}${media}`,
+    `:white_check_mark: Azure DevOps Bug *#${workItemId}* created${assign} — ${url}${media}${mediaHint}`,
   );
 }
 
@@ -513,6 +518,7 @@ export async function processCreateAzureBugShortcut(
             threadTs: ctx.threadTs,
             maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
             maxFiles: settings.slackMediaMaxFilesPerBug,
+            interactionMessageFiles: message.files,
           }).catch((e) => {
             void logError("slack media prefetch failed (bug may still be created)", e, {
               channelId,
@@ -751,6 +757,13 @@ export async function processCreateAzureBugShortcut(
         created.url,
         assigneeEmail,
         mediaAttached,
+        {
+          hintWhenMediaExpectedButNone:
+            slackMediaOn &&
+            mediaAttached === 0 &&
+            ((message.files?.length ?? 0) > 0 ||
+              slackMediaPrefetch.skipped.length > 0),
+        },
       );
 
       await logEvent("info", "bug created from slack", {

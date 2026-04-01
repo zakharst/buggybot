@@ -15,6 +15,11 @@ export type SlackBugShortcutPayload = {
     ts: string;
     thread_ts?: string;
     blocks?: unknown[];
+    /**
+     * Slack often includes hosted file metadata here on message shortcuts while
+     * `conversations.history` returns an empty `files` array — must be preserved.
+     */
+    files?: unknown[];
   };
   /** Present on normal Slack payloads; optional after normalize for edge cases. */
   trigger_id: string;
@@ -66,6 +71,7 @@ export function normalizeBugShortcutPayload(p: unknown): SlackBugShortcutPayload
       ts: rawMsg.ts,
       thread_ts: typeof rawMsg.thread_ts === "string" ? rawMsg.thread_ts : undefined,
       blocks: Array.isArray(rawMsg.blocks) ? rawMsg.blocks : undefined,
+      files: Array.isArray(rawMsg.files) ? rawMsg.files : undefined,
     };
   }
 

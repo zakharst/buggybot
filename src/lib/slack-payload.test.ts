@@ -38,6 +38,23 @@ describe("normalizeBugShortcutPayload", () => {
       normalizeBugShortcutPayload({ type: "block_actions" }),
     ).toBeNull();
   });
+
+  it("preserves message.files from Slack shortcut payload", () => {
+    const p = normalizeBugShortcutPayload({
+      type: "message_action",
+      callback_id: "create_azure_bug",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      channel: { id: "C1" },
+      message: {
+        ts: "99.0",
+        files: [{ id: "F123", name: "x.png" }],
+      },
+      trigger_id: "t",
+    });
+    expect(p?.message?.files).toHaveLength(1);
+    expect((p?.message?.files?.[0] as { id: string }).id).toBe("F123");
+  });
 });
 
 describe("extractMessageText", () => {
