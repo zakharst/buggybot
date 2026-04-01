@@ -24,6 +24,27 @@ export const settingsPayloadSchema = z.object({
   openaiRefineSecondPass: z.boolean().default(true),
   /** Upload screenshots/videos from the Slack message to ADO after bug create. */
   slackMediaAttachmentsEnabled: z.boolean().default(true),
+  /**
+   * When true, never runs the Slack→ADO media pipeline (even if attachments are enabled).
+   * Env `AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS=1` still forces off.
+   */
+  slackMediaForceDisabled: z.boolean().default(false),
+  /**
+   * On each bug create, fetch this work item and copy `System.AreaPath` (overrides
+   * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` for Area when the fetch succeeds).
+   * Cleared in admin → key removed from DB; env `AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID` applies.
+   */
+  adoTemplateWorkItemId: z.number().int().positive().optional(),
+  /**
+   * Boards team **display name** (Project settings → Teams). Current sprint is read via
+   * Team Settings API and set as `System.IterationPath`.
+   */
+  adoIterationTeamName: z.string().max(256).optional(),
+  /**
+   * Exact picklist label for Reported from (or your process equivalent). Overrides env
+   * `AZURE_DEVOPS_REPORTED_FROM` when non-empty.
+   */
+  adoReportedFromLabel: z.string().max(200).optional(),
   /** Per-file size cap for Slack → ADO media (bytes). */
   slackMediaMaxBytesPerFile: z
     .number()

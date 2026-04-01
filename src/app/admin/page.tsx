@@ -19,7 +19,7 @@ export default async function AdminPage() {
   try {
     [settings, logs] = await Promise.all([
       getSettings(),
-      getRecentLogs(250),
+      getRecentLogs(500),
     ]);
   } catch (e) {
     const detail = formatError(e);
@@ -58,6 +58,20 @@ export default async function AdminPage() {
       slackMediaPerFileCapMb={slackMediaPerFileCapMegabytes()}
       slackInteractionsUrl={slackUrlFromEnv("/api/slack/interactions")}
       slackEventsUrl={slackUrlFromEnv("/api/slack/events")}
+      deploymentMeta={{
+        gitSha: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
+        vercelEnv: process.env.VERCEL_ENV?.trim() || null,
+        vercelUrl: process.env.VERCEL_URL?.trim() || null,
+      }}
+      envOptionalHints={{
+        adoTemplateWorkItemId: Boolean(
+          process.env.AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID?.trim(),
+        ),
+        adoIterationTeamName: Boolean(
+          process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim(),
+        ),
+        adoReportedFrom: Boolean(process.env.AZURE_DEVOPS_REPORTED_FROM?.trim()),
+      }}
       envStatus={{
         hasOpenAi: Boolean(process.env.OPENAI_API_KEY),
         hasSlackSigning: Boolean(process.env.SLACK_SIGNING_SECRET),

@@ -7,6 +7,7 @@ import {
   settingsPayloadSchema,
   type SettingsPayload,
 } from "@/lib/settings-types";
+import { logEvent } from "@/lib/logger";
 import { adoMaxAttachmentBytesPerFile } from "@/lib/slack-ado-media-limits";
 
 function clampSlackMediaMaxBytesPerFile(
@@ -54,11 +55,24 @@ export async function getSettings(): Promise<SettingsPayload> {
   };
 }
 
+const OPTIONAL_SETTING_KEYS = [
+  "adoTemplateWorkItemId",
+  "adoIterationTeamName",
+  "adoReportedFromLabel",
+] as const satisfies readonly (keyof SettingsPayload)[];
+
 export async function saveSettings(
   partial: Partial<SettingsPayload>,
 ): Promise<SettingsPayload> {
   const current = await getSettings();
-  const merged = settingsPayloadSchema.parse({ ...current, ...partial });
+  const mergedRecord: Record<string, unknown> = { ...current, ...partial };
+  const p = partial as Record<string, unknown>;
+  for (const k of OPTIONAL_SETTING_KEYS) {
+    if (k in partial && p[k] === undefined) {
+      delete mergedRecord[k];
+    }
+  }
+  const merged = settingsPayloadSchema.parse(mergedRecord);
   const adoPerFile = adoMaxAttachmentBytesPerFile();
   const next: SettingsPayload = {
     ...merged,
@@ -78,6 +92,15 @@ export async function saveSettings(
         updatedAt: new Date(),
       },
     });
+
+  void logEvent("info", "Admin settings saved to Postgres", {
+    automationEnabled: next.automationEnabled,
+    slackMediaAttachmentsEnabled: next.slackMediaAttachmentsEnabled,
+    slackMediaForceDisabled: next.slackMediaForceDisabled,
+    hasTemplateWi: next.adoTemplateWorkItemId != null,
+    hasIterationTeam: Boolean(next.adoIterationTeamName?.trim()),
+    hasReportedFromLabel: Boolean(next.adoReportedFromLabel?.trim()),
+  });
 
   return next;
 }

@@ -53,6 +53,8 @@ export async function saveAdminSettingsAction(
     formData.get("openaiRefineSecondPass") === "on";
   const slackMediaAttachmentsEnabled =
     formData.get("slackMediaAttachmentsEnabled") === "on";
+  const slackMediaForceDisabled =
+    formData.get("slackMediaForceDisabled") === "on";
   const slackMediaMaxMegabytesRaw = Number(
     formData.get("slackMediaMaxMegabytes"),
   );
@@ -91,18 +93,48 @@ export async function saveAdminSettingsAction(
     ? Math.min(20, Math.max(1, Math.floor(slackMediaMaxFilesRaw)))
     : 8;
 
+  const adoTemplateRaw = String(
+    formData.get("adoTemplateWorkItemId") ?? "",
+  ).trim();
+  let adoTemplateWorkItemId: number | undefined;
+  if (adoTemplateRaw !== "") {
+    const n = Number(adoTemplateRaw);
+    if (!Number.isInteger(n) || n <= 0) {
+      return {
+        ok: false,
+        error: "Template work item ID must be a positive integer or empty.",
+      };
+    }
+    adoTemplateWorkItemId = n;
+  } else {
+    adoTemplateWorkItemId = undefined;
+  }
+
+  const adoIterationTeamName = String(
+    formData.get("adoIterationTeamName") ?? "",
+  ).trim();
+  const adoReportedFromLabel = String(
+    formData.get("adoReportedFromLabel") ?? "",
+  ).trim();
+
   const partial: Partial<SettingsPayload> = {
     adoOrg: adoOrg || undefined,
     adoProject: adoProject || undefined,
     openaiModel: openaiModel || DEFAULT_OPENAI_MODEL,
     openaiRefineSecondPass,
     slackMediaAttachmentsEnabled,
+    slackMediaForceDisabled,
     slackMediaMaxBytesPerFile,
     slackMediaMaxFilesPerBug,
     qaEmails,
     assignmentMode: mode.data,
     automationEnabled,
     confidenceThreshold,
+    adoTemplateWorkItemId,
+    adoIterationTeamName:
+      adoIterationTeamName === "" ? undefined : adoIterationTeamName,
+    adoReportedFromLabel:
+      adoReportedFromLabel === "" ? undefined : adoReportedFromLabel,
   };
 
   try {

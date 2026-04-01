@@ -14,6 +14,7 @@ import {
   buildSlackSourceFooterHtml,
   addWorkItemComment,
   createAzureBug,
+  type CreateAzureBugWorkItemDefaults,
   normalizeSeverityForAdo,
   patchWorkItemSystemDescription,
 } from "@/lib/azure-devops";
@@ -503,6 +504,7 @@ export async function processCreateAzureBugShortcut(
 
       const slackMediaOn =
         settings.slackMediaAttachmentsEnabled &&
+        !settings.slackMediaForceDisabled &&
         process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1";
 
       if (!slackMediaOn) {
@@ -617,6 +619,16 @@ export async function processCreateAzureBugShortcut(
         const createPromise = assigneePickPromise.then(({ email, nextIndex }) => {
           assigneeEmail = email;
           assigneeNextIndex = nextIndex;
+          const wd: CreateAzureBugWorkItemDefaults = {};
+          if (settings.adoTemplateWorkItemId != null) {
+            wd.templateWorkItemId = settings.adoTemplateWorkItemId;
+          }
+          if (settings.adoIterationTeamName?.trim()) {
+            wd.iterationTeamName = settings.adoIterationTeamName.trim();
+          }
+          if (settings.adoReportedFromLabel?.trim()) {
+            wd.reportedFromLabel = settings.adoReportedFromLabel.trim();
+          }
           return createAzureBug({
             org,
             project,
@@ -630,6 +642,8 @@ export async function processCreateAzureBugShortcut(
             reproStepsHtml,
             systemInfoHtml,
             acceptanceCriteriaHtml,
+            workItemDefaults:
+              Object.keys(wd).length > 0 ? wd : undefined,
           });
         });
 

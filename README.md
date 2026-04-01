@@ -285,7 +285,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
 
-**Bug layout (Repro Steps / System Info / Acceptance Criteria):** Slack-created bugs also fill **`Microsoft.VSTS.TCM.ReproSteps`**, **`Microsoft.VSTS.TCM.SystemInfo`**, and **`Microsoft.VSTS.Common.AcceptanceCriteria`** from the OpenAI-structured fields (plus **`System.Description`** as the full QA-style block). If create fails, set **`AZURE_DEVOPS_DISABLE_TCM_TAB_FILL=1`** or adjust field refs / **`AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB`**. If the model returns empty sections, **Description** falls back to the **raw Slack message** text. |
+**Bug layout (Repro Steps / System Info / Acceptance Criteria):** Slack-created bugs also fill **`Microsoft.VSTS.TCM.ReproSteps`**, **`Microsoft.VSTS.TCM.SystemInfo`**, and **`Microsoft.VSTS.Common.AcceptanceCriteria`** from the OpenAI-structured fields (plus **`System.Description`** as the full QA-style block). If create fails, set **`AZURE_DEVOPS_DISABLE_TCM_TAB_FILL=1`** or adjust field refs / **`AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB`**. If the model returns empty sections, **Description** falls back to the **raw Slack message** text.
 
 **Not read by this app:** `POSTGRES_URL`, `POSTGRES_PRISMA_URL`, `DATABASE_URL_UNPOOLED`, or any other Postgres env name—only **`DATABASE_URL`**.
 
@@ -300,6 +300,10 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 - **Server Actions** in `src/app/admin/actions.ts` **re-verify** the `Authorization` header so direct POSTs cannot bypass the UI.
 
 To sign out: close the session using the browser’s password manager / “sign out” for the site, or use a private window.
+
+- **Deployment** — the admin UI shows **`VERCEL_GIT_COMMIT_SHA`**, **`VERCEL_ENV`**, and **`VERCEL_URL`** on Vercel so you can confirm which revision is live after a push.
+- **Logs** — up to **500** rows from **`app_logs`** with **level filter** and **full-text search** over message + JSON meta (no Vercel dashboard required).
+- **Postgres-backed settings** (edit in the form, no code change): ADO org/project overrides, **template work item ID** (copy `System.AreaPath`), **iteration team name** (current sprint via Team Settings API), **Reported from** picklist label, Slack→ADO media (**normal + “hard off”**), OpenAI model, QA pool, assignment, automation, confidence. Filling these overrides the optional env vars **`AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID`**, **`AZURE_DEVOPS_ITERATION_TEAM_NAME`**, and **`AZURE_DEVOPS_REPORTED_FROM`** when non-empty. Saving settings writes an **`Admin settings saved to Postgres`** line to **`app_logs`**.
 
 ---
 

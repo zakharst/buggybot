@@ -9,6 +9,7 @@ function baseSettings(
     openaiModel: "gpt-4o",
     openaiRefineSecondPass: true,
     slackMediaAttachmentsEnabled: true,
+    slackMediaForceDisabled: false,
     slackMediaMaxBytesPerFile: 12 * 1024 * 1024,
     slackMediaMaxFilesPerBug: 8,
     qaEmails: ["a@x.com", "b@x.com"],

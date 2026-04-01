@@ -391,6 +391,12 @@ export function buildAdoDescriptionWithSlackFallback(
   return base;
 }
 
+export type CreateAzureBugWorkItemDefaults = {
+  templateWorkItemId?: number;
+  iterationTeamName?: string;
+  reportedFromLabel?: string;
+};
+
 export async function createAzureBug(params: {
   org: string;
   project: string;
@@ -406,6 +412,11 @@ export async function createAzureBug(params: {
   reproStepsHtml?: string;
   systemInfoHtml?: string;
   acceptanceCriteriaHtml?: string;
+  /**
+   * Postgres admin settings override env for Area / Iteration / Reported from when set.
+   * Strings: trim; empty/null falls back to env.
+   */
+  workItemDefaults?: CreateAzureBugWorkItemDefaults;
 }): Promise<{ id: number; url: string }> {
   const type = params.workItemType ?? "Bug";
   const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/$${encodeURIComponent(type)}?api-version=7.1`;
@@ -418,28 +429,37 @@ export async function createAzureBug(params: {
   dropEmptyAdoFieldValues(mergedContext);
 
   /**
-   * Optional: copy Area from a reference work item and set Iteration to the team’s
-   * current sprint (overrides `System.AreaPath` / `System.IterationPath` from
-   * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` when the API calls succeed).
+   * Area / iteration / Reported from: admin (`workItemDefaults`) wins over env when
+   * a concrete value is set; `null` on template id means “cleared in admin, use env”.
    */
-  const templateIdRaw = process.env.AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID?.trim();
-  if (templateIdRaw) {
-    const tid = Number(templateIdRaw);
-    if (Number.isFinite(tid) && tid > 0) {
-      const areaPath = await fetchWorkItemFieldString({
-        org: params.org,
-        project: params.project,
-        pat: params.pat,
-        workItemId: tid,
-        fieldRef: "System.AreaPath",
-      });
-      if (areaPath) {
-        mergedContext["System.AreaPath"] = areaPath;
-      }
+  const wd = params.workItemDefaults;
+  let templateTid = NaN;
+  const adminTid = wd?.templateWorkItemId;
+  if (typeof adminTid === "number" && adminTid > 0) {
+    templateTid = adminTid;
+  } else if (adminTid !== null) {
+    const raw = process.env.AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID?.trim();
+    if (raw) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) templateTid = n;
+    }
+  }
+  if (Number.isFinite(templateTid) && templateTid > 0) {
+    const areaPath = await fetchWorkItemFieldString({
+      org: params.org,
+      project: params.project,
+      pat: params.pat,
+      workItemId: templateTid,
+      fieldRef: "System.AreaPath",
+    });
+    if (areaPath) {
+      mergedContext["System.AreaPath"] = areaPath;
     }
   }
 
-  const iterationTeam = process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim();
+  const iterationTeam =
+    wd?.iterationTeamName?.trim() ||
+    process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim();
   if (iterationTeam) {
     const iterationPath = await fetchTeamCurrentIterationPath({
       org: params.org,
@@ -453,9 +473,10 @@ export async function createAzureBug(params: {
   }
 
   const reportedFromRef = resolvedReportedFromFieldRef();
-  /** Exact picklist label from process (case-sensitive). ado:list-bug-fields lists allowed values. */
   const reportedFromValue =
-    process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() || "DT team";
+    wd?.reportedFromLabel?.trim() ||
+    process.env.AZURE_DEVOPS_REPORTED_FROM?.trim() ||
+    "DT team";
   mergedContext[reportedFromRef] = reportedFromValue;
 
   if (!("System.State" in mergedContext)) {

@@ -7,10 +7,11 @@ import {
   type SaveAdminState,
 } from "./actions";
 import type { SettingsPayload } from "@/lib/settings-types";
-import type { InferSelectModel } from "drizzle-orm";
-import type { appLogs } from "@/db/schema";
-
-type LogRow = InferSelectModel<typeof appLogs>;
+import {
+  AdminLogExplorer,
+  LogTable,
+  type LogRow,
+} from "./admin-log-explorer";
 
 /** Shown at the top of /admin so Slack→ADO/media issues are visible without scrolling. */
 const PIPELINE_LOG_MESSAGE_RE =
@@ -63,6 +64,17 @@ export function AdminPanel(props: {
   slackEventsUrl: string | null;
   /** Per-file MB cap (ADO Services = 60; on-prem can raise via env). */
   slackMediaPerFileCapMb: number;
+  /** Vercel / CI — confirms which revision is running. */
+  deploymentMeta: {
+    gitSha: string | null;
+    vercelEnv: string | null;
+    vercelUrl: string | null;
+  };
+  envOptionalHints: {
+    adoTemplateWorkItemId: boolean;
+    adoIterationTeamName: boolean;
+    adoReportedFrom: boolean;
+  };
 }) {
   const {
     settings,
@@ -71,6 +83,8 @@ export function AdminPanel(props: {
     slackInteractionsUrl,
     slackEventsUrl,
     slackMediaPerFileCapMb,
+    deploymentMeta,
+    envOptionalHints,
   } = props;
   const [saveState, formAction] = useActionState<
     SaveAdminState,
@@ -85,13 +99,51 @@ export function AdminPanel(props: {
           <p className="text-sm text-[var(--muted)]">
             This page is protected with{" "}
             <strong className="font-medium text-[var(--text)]">HTTP Basic Auth</strong>{" "}
-            (browser prompt). Automation, OpenAI, Slack→ADO media, QA pool, and
-            ADO org/project overrides are stored in Postgres. Secrets (tokens,
-            PAT, DATABASE_URL) and process-template env (required fields, TCM
-            tab toggles) stay in environment variables — see README.
+            (browser prompt). Most behaviour (ADO area/sprint defaults, Slack→ADO
+            media, OpenAI, QA pool) is configured below and stored in{" "}
+            <strong className="font-medium text-[var(--text)]">Postgres</strong>.
+            Secrets (tokens, PAT, <code className="text-[var(--accent)]">DATABASE_URL</code>
+            ) and advanced JSON (
+            <code className="text-[var(--accent)]">AZURE_DEVOPS_REQUIRED_FIELD_VALUES</code>
+            , TCM tab kill-switches) stay in environment variables.
           </p>
         </div>
       </div>
+
+      <section className="mt-8 rounded-lg border border-[var(--accent)]/30 bg-[var(--surface)] p-4 text-sm">
+        <h2 className="text-base font-semibold">Deployment &amp; logs</h2>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          After you push to GitHub, Vercel builds automatically. Use the running
+          commit below to confirm production matches your repo; use logs (below
+          and in the explorer) to debug Slack→ADO without opening Vercel.
+        </p>
+        <ul className="mt-3 grid gap-1 font-mono text-xs sm:grid-cols-1">
+          <li>
+            <span className="text-[var(--muted)]">Git commit (VERCEL_GIT_COMMIT_SHA):</span>{" "}
+            {deploymentMeta.gitSha ? (
+              <code className="text-[var(--accent)]">{deploymentMeta.gitSha}</code>
+            ) : (
+              <span className="text-[var(--muted)]">not set (local or non-Vercel)</span>
+            )}
+          </li>
+          <li>
+            <span className="text-[var(--muted)]">VERCEL_ENV:</span>{" "}
+            <code className="text-[var(--accent)]">
+              {deploymentMeta.vercelEnv ?? "—"}
+            </code>
+          </li>
+          <li>
+            <span className="text-[var(--muted)]">VERCEL_URL:</span>{" "}
+            {deploymentMeta.vercelUrl ? (
+              <code className="break-all text-[var(--accent)]">
+                {deploymentMeta.vercelUrl}
+              </code>
+            ) : (
+              "—"
+            )}
+          </li>
+        </ul>
+      </section>
 
       <AdminActivityDigest logs={logs} />
 
@@ -167,6 +219,30 @@ export function AdminPanel(props: {
             )}
           </p>
         </div>
+        <p className="mt-3 text-xs text-[var(--muted)]">
+          Optional env fallbacks (used when admin fields are empty):{" "}
+          <code className="text-[var(--accent)]">AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID</code>{" "}
+          {envOptionalHints.adoTemplateWorkItemId ? (
+            <span className="text-[var(--ok)]">set</span>
+          ) : (
+            <span className="text-[var(--muted)]">unset</span>
+          )}
+          ,{" "}
+          <code className="text-[var(--accent)]">AZURE_DEVOPS_ITERATION_TEAM_NAME</code>{" "}
+          {envOptionalHints.adoIterationTeamName ? (
+            <span className="text-[var(--ok)]">set</span>
+          ) : (
+            <span className="text-[var(--muted)]">unset</span>
+          )}
+          ,{" "}
+          <code className="text-[var(--accent)]">AZURE_DEVOPS_REPORTED_FROM</code>{" "}
+          {envOptionalHints.adoReportedFrom ? (
+            <span className="text-[var(--ok)]">set</span>
+          ) : (
+            <span className="text-[var(--muted)]">unset</span>
+          )}
+          .
+        </p>
       </section>
 
       <form action={formAction} className="mt-10 space-y-8">
@@ -205,6 +281,62 @@ export function AdminPanel(props: {
               />
             </label>
           </div>
+          <div className="mt-6 rounded-md border border-[var(--border)]/80 bg-[var(--bg)]/40 p-4">
+            <h3 className="text-sm font-semibold text-[var(--text)]">
+              Work item defaults (Area, sprint, Reported from)
+            </h3>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              Stored in Postgres. On each bug create the app can copy{" "}
+              <code className="text-[var(--accent)]">System.AreaPath</code> from a
+              template work item and set{" "}
+              <code className="text-[var(--accent)]">System.IterationPath</code>{" "}
+              to the team&apos;s <strong>current</strong> iteration (same APIs as
+              the CLI smoke). Values here <strong>override</strong> the optional
+              env vars when filled.
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-1">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-[var(--muted)]">
+                  Template work item ID (copy Area from this bug)
+                </span>
+                <input
+                  name="adoTemplateWorkItemId"
+                  type="number"
+                  min={1}
+                  step={1}
+                  placeholder="e.g. 20741"
+                  defaultValue={
+                    settings.adoTemplateWorkItemId != null
+                      ? String(settings.adoTemplateWorkItemId)
+                      : ""
+                  }
+                  className="max-w-xs rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-[var(--muted)]">
+                  Iteration team name (Boards → Project settings → Teams)
+                </span>
+                <input
+                  name="adoIterationTeamName"
+                  defaultValue={settings.adoIterationTeamName ?? ""}
+                  placeholder='e.g. Digital-Services Team'
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-[var(--muted)]">
+                  Reported from (exact picklist label)
+                </span>
+                <input
+                  name="adoReportedFromLabel"
+                  defaultValue={settings.adoReportedFromLabel ?? ""}
+                  placeholder="e.g. DT team"
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+            </div>
+          </div>
           <div className="mt-8 border-t border-[var(--border)] pt-6">
             <h3 className="text-base font-medium">Slack → ADO attachments</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
@@ -239,6 +371,26 @@ export function AdminPanel(props: {
               <span>
                 Attach screenshots and videos from the Slack message to the
                 bug
+              </span>
+            </label>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="slackMediaForceDisabled"
+                value="on"
+                defaultChecked={settings.slackMediaForceDisabled}
+                className="h-4 w-4 rounded border-[var(--border)]"
+              />
+              <span>
+                <strong className="font-medium text-[var(--text)]">
+                  Hard off
+                </strong>
+                : never download or attach Slack media (even if the option above
+                is on). Env{" "}
+                <code className="text-[var(--accent)]">
+                  AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS=1
+                </code>{" "}
+                still wins and disables everything.
               </span>
             </label>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -372,13 +524,13 @@ export function AdminPanel(props: {
       </form>
 
       <section className="mt-12 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
-        <h2 className="text-lg font-medium">All recent log entries</h2>
+        <h2 className="text-lg font-medium">All log entries (filter &amp; search)</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Newest first (same data as above, full table). Use the digest at the top
-          for Slack screenshots and Azure DevOps attachment issues.
+          Newest first, up to 500 rows from Postgres. Filter by level or search
+          message/meta — no Vercel dashboard required.
         </p>
-        <div className="mt-4 max-h-96 overflow-auto text-sm">
-          <LogTable rows={logs} emptyLabel="No log entries yet." />
+        <div className="mt-4">
+          <AdminLogExplorer logs={logs} />
         </div>
       </section>
     </main>
@@ -390,69 +542,6 @@ function Status({ ok }: { ok: boolean }) {
     <span className="text-[var(--ok)]">set</span>
   ) : (
     <span className="text-[var(--danger)]">missing</span>
-  );
-}
-
-function LogTable({
-  rows,
-  emptyLabel,
-}: {
-  rows: LogRow[];
-  emptyLabel: string;
-}) {
-  return (
-    <table className="w-full border-collapse text-left">
-      <thead>
-        <tr className="border-b border-[var(--border)] text-[var(--muted)]">
-          <th className="py-2 pr-4 font-medium">Time</th>
-          <th className="py-2 pr-4 font-medium">Level</th>
-          <th className="py-2 font-medium">Message</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 ? (
-          <tr>
-            <td colSpan={3} className="py-4 text-[var(--muted)]">
-              {emptyLabel}
-            </td>
-          </tr>
-        ) : (
-          rows.map((row) => (
-            <tr
-              key={row.id}
-              className="border-b border-[var(--border)]/60 align-top"
-            >
-              <td className="py-2 pr-4 whitespace-nowrap text-[var(--muted)]">
-                {row.createdAt
-                  ? new Date(row.createdAt).toLocaleString()
-                  : "—"}
-              </td>
-              <td className="py-2 pr-4">
-                <span
-                  className={
-                    row.level === "error"
-                      ? "text-[var(--danger)]"
-                      : row.level === "warn"
-                        ? "text-amber-600 dark:text-amber-400"
-                        : ""
-                  }
-                >
-                  {row.level}
-                </span>
-              </td>
-              <td className="py-2">
-                {row.message}
-                {row.meta ? (
-                  <pre className="mt-1 max-w-full overflow-x-auto text-xs text-[var(--muted)]">
-                    {JSON.stringify(row.meta, null, 2)}
-                  </pre>
-                ) : null}
-              </td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </table>
   );
 }
 
