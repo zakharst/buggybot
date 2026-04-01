@@ -12,19 +12,49 @@ import type { SlackBugShortcutPayload } from "@/lib/slack-payload";
 /** Default Slack shortcode for :ladybug: (Events API `reaction` value, no colons). */
 export const LADYBUG_REACTION_NAME = "ladybug";
 
+/** Values people often paste by mistake (boolean-style), not Slack `reaction` names. */
+const BOGUS_LADYBUG_NAME_TOKENS = new Set([
+  "1",
+  "0",
+  "true",
+  "false",
+  "yes",
+  "no",
+  "on",
+  "off",
+]);
+
+let warnedBogusLadybugEnv = false;
+
 /**
  * Allowed `reaction` values for triggering the bug pipeline. Default `ladybug`; override if your
  * workspace uses a custom emoji name (check payload with `SLACK_DEBUG_REACTIONS=1`).
+ *
+ * **Not** the same as `SLACK_DEBUG_REACTIONS=1` — that variable is on/off; this one must be
+ * comma-separated **emoji short names** (e.g. `ladybug`), not `1`.
  */
 export function getLadybugReactionNames(): string[] {
   const raw = process.env.SLACK_LADYBUG_REACTION_NAMES?.trim();
-  if (raw) {
-    return raw
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
+  if (!raw) {
+    return [LADYBUG_REACTION_NAME];
   }
-  return [LADYBUG_REACTION_NAME];
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return [LADYBUG_REACTION_NAME];
+  }
+  if (parts.length === 1 && BOGUS_LADYBUG_NAME_TOKENS.has(parts[0]!)) {
+    if (!warnedBogusLadybugEnv) {
+      warnedBogusLadybugEnv = true;
+      console.warn(
+        `[buggybot] SLACK_LADYBUG_REACTION_NAMES="${raw}" is not a Slack reaction name (looks like a boolean flag). Remove it or set e.g. ladybug. Using default "${LADYBUG_REACTION_NAME}".`,
+      );
+    }
+    return [LADYBUG_REACTION_NAME];
+  }
+  return parts;
 }
 
 function extractEventCallbackTeamId(body: Record<string, unknown>): string | null {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getLadybugReactionNames,
   LADYBUG_REACTION_NAME,
   parseLadybugReactionContext,
 } from "@/lib/slack-events";
@@ -113,6 +114,11 @@ describe("parseLadybugReactionContext", () => {
       messageTs: "1.0",
       userId: "U1",
     });
+  });
+
+  it("getLadybugReactionNames ignores mistaken boolean-style value 1", () => {
+    vi.stubEnv("SLACK_LADYBUG_REACTION_NAMES", "1");
+    expect(getLadybugReactionNames()).toEqual([LADYBUG_REACTION_NAME]);
   });
 
   it("matches reaction case-insensitively", () => {
