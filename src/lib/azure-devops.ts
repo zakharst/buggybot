@@ -380,6 +380,111 @@ export async function createAzureBug(params: {
   return { id: data.id, url: workUrl };
 }
 
+function adoSafeAttachmentFileName(name: string): string {
+  const trimmed = name.trim().replace(/[/\\?%*:|"<>]/g, "_") || "attachment";
+  return trimmed.length > 120 ? trimmed.slice(0, 120) : trimmed;
+}
+
+/** Upload binary to ADO WIT attachments; returns the URL to use in an `AttachedFile` relation. */
+export async function uploadAzureDevOpsAttachment(params: {
+  org: string;
+  project: string;
+  pat: string;
+  fileName: string;
+  bytes: Uint8Array;
+}): Promise<{ url: string }> {
+  const safe = adoSafeAttachmentFileName(params.fileName);
+  const qs = new URLSearchParams({
+    fileName: safe,
+    "api-version": "7.1",
+  });
+  const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/attachments?${qs.toString()}`;
+
+  const body = Buffer.from(params.bytes);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      Authorization: `Basic ${basicAuth(params.pat)}`,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Azure DevOps attachment upload failed ${res.status}: ${errText}`);
+  }
+
+  const data = (await res.json()) as { url?: string };
+  if (!data.url || typeof data.url !== "string") {
+    throw new Error("Azure DevOps attachment upload: missing url in response");
+  }
+  return { url: data.url };
+}
+
+/**
+ * Links uploaded attachment URLs to a work item (screenshots/videos from Slack).
+ */
+export async function attachMediaDownloadsToWorkItem(params: {
+  org: string;
+  project: string;
+  pat: string;
+  workItemId: number;
+  files: Array<{ fileName: string; bytes: Uint8Array }>;
+}): Promise<{ attached: number; errors: string[] }> {
+  const errors: string[] = [];
+  const attachmentUrls: string[] = [];
+
+  for (const f of params.files) {
+    try {
+      const { url } = await uploadAzureDevOpsAttachment({
+        org: params.org,
+        project: params.project,
+        pat: params.pat,
+        fileName: f.fileName,
+        bytes: f.bytes,
+      });
+      attachmentUrls.push(url);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${f.fileName}: ${msg}`);
+    }
+  }
+
+  if (!attachmentUrls.length) {
+    return { attached: 0, errors };
+  }
+
+  const patchUrl = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
+
+  const patchBody = attachmentUrls.map((attachmentUrl) => ({
+    op: "add" as const,
+    path: "/relations/-",
+    value: {
+      rel: "AttachedFile",
+      url: attachmentUrl,
+    },
+  }));
+
+  const res = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json-patch+json",
+      Authorization: `Basic ${basicAuth(params.pat)}`,
+    },
+    body: JSON.stringify(patchBody),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    errors.push(`link attachments to work item failed ${res.status}: ${errText.slice(0, 500)}`);
+    return { attached: 0, errors };
+  }
+
+  return { attached: attachmentUrls.length, errors };
+}
+
 export async function addWorkItemComment(params: {
   org: string;
   project: string;

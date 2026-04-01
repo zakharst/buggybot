@@ -51,6 +51,7 @@ buggybot/
 │       ├── openai-bug.ts      # Structured bug JSON (+ openai-bug-examples.json few-shot)
 │       ├── settings-types.ts
 │       ├── settings.ts
+│       ├── slack-message-media.ts  # Slack images/videos → ADO attachments
 │       ├── slack-payload.ts
 │       ├── slack-process.ts   # Main shortcut pipeline
 │       └── slack-verify.ts    # Slack signing secret HMAC
@@ -139,6 +140,9 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
    - `chat:write` — post thread replies  
    - `channels:read` — `chat.getPermalink` in public channels  
    - `groups:read` — same for private channels the bot is in  
+   - `files:read` — download **screenshots and videos** from the message to attach in Azure DevOps  
+   - `channels:history` — read the message (including `files`) in public channels  
+   - `groups:history` — same in private channels the bot is in  
 
 3. **Install to Workspace** → copy **Bot User OAuth Token** → `SLACK_BOT_TOKEN` in `.env`.
 
@@ -228,6 +232,9 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_DISABLE_TCM_TAB_FILL` | Set to `1` to stop filling **Repro Steps**, **System Info**, and **Acceptance Criteria** (defaults target standard Azure Boards Bug refs). Use if work item create fails with an unknown field. |
 | `AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB` | Set to `1` to skip only **Acceptance Criteria** (`Microsoft.VSTS.Common.AcceptanceCriteria`) when your Bug type has no such field. |
 | `AZURE_DEVOPS_REPRO_STEPS_FIELD_REF` / `AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF` / `AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF` | Override reference names if your process template uses different fields for those tabs. |
+| `AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS` | Set to `1` to skip copying **images/videos** from the Slack message into ADO **Attachments** (default: **enabled**; requires Slack **`files:read`** + **`channels:history`** / **`groups:history`**). |
+| `AZURE_DEVOPS_MAX_SLACK_ATTACHMENT_BYTES` | Max size per file (default **25MB**; cap **120MB**). |
+| `AZURE_DEVOPS_MAX_SLACK_MEDIA_FILES` | Max image/video files per bug (default **8**, max **20**). |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
@@ -261,7 +268,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 ## 9. Behavior summary
 
-- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug, Azure DevOps **Bug** (Slack permalink in **Description** footer, no Discussion comment), QA assignee from pool, thread reply with work item link.
+- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug, Azure DevOps **Bug** (Slack permalink in **Description** footer, no Discussion comment), **images/videos from the message attached in ADO** when scopes allow, QA assignee from pool, thread reply with work item link.
 
 ## License
 

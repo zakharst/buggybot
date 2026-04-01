@@ -1,0 +1,214 @@
+import type { WebClient } from "@slack/web-api";
+import type {
+  FileElement,
+  MessageElement,
+} from "@slack/web-api/dist/types/response/ConversationsHistoryResponse";
+
+function isImageOrVideoSlackFile(f: FileElement): boolean {
+  if (f.is_external) return false;
+  const mime = (f.mimetype || "").toLowerCase();
+  if (mime.startsWith("image/")) return true;
+  if (mime.startsWith("video/")) return true;
+  const ft = (f.filetype || "").toLowerCase();
+  const images = new Set([
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "heic",
+    "bmp",
+    "tif",
+    "tiff",
+  ]);
+  const videos = new Set([
+    "mp4",
+    "mov",
+    "webm",
+    "avi",
+    "mkv",
+    "mpeg",
+    "mpg",
+    "m4v",
+  ]);
+  return images.has(ft) || videos.has(ft);
+}
+
+/** Prefer download URL (works with bot token + files:read). */
+function slackFileDownloadUrl(f: FileElement): string | undefined {
+  const u = f.url_private_download?.trim() || f.url_private?.trim();
+  return u || undefined;
+}
+
+/**
+ * Loads the Slack message that triggered the shortcut so we get `files` (not always in the interaction payload).
+ */
+export async function fetchImageAndVideoFilesForSlackMessage(
+  slack: WebClient,
+  channelId: string,
+  messageTs: string,
+  threadTs: string,
+): Promise<FileElement[]> {
+  const isThreadReply = threadTs !== messageTs;
+  let msg: MessageElement | undefined;
+
+  if (isThreadReply) {
+    const res = await slack.conversations.replies({
+      channel: channelId,
+      ts: threadTs,
+      limit: 200,
+    });
+    if (!res.ok || !res.messages?.length) return [];
+    msg = res.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
+  } else {
+    const h = await slack.conversations.history({
+      channel: channelId,
+      latest: messageTs,
+      oldest: messageTs,
+      inclusive: true,
+      limit: 1,
+    });
+    if (h.ok && h.messages?.[0]?.ts === messageTs) {
+      msg = h.messages[0] as MessageElement;
+    }
+    if (!msg) {
+      const r = await slack.conversations.replies({
+        channel: channelId,
+        ts: messageTs,
+        limit: 200,
+      });
+      if (r.ok && r.messages?.length) {
+        msg = r.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
+      }
+    }
+  }
+
+  const files = msg?.files;
+  if (!Array.isArray(files) || !files.length) return [];
+  return files.filter((f) => isImageOrVideoSlackFile(f));
+}
+
+export type SlackMediaDownload = {
+  fileName: string;
+  contentType: string;
+  bytes: Uint8Array;
+  slackFileId: string;
+};
+
+function pickSlackFileName(f: FileElement): string {
+  const n = (f.name || f.title || "").trim();
+  if (n) return n;
+  const ft = (f.filetype || "bin").replace(/[^\w.-]/g, "");
+  return `slack-attachment.${ft || "bin"}`;
+}
+
+export function maxSlackAttachmentBytes(): number {
+  const raw = process.env.AZURE_DEVOPS_MAX_SLACK_ATTACHMENT_BYTES?.trim();
+  const n = raw ? Number(raw) : NaN;
+  if (Number.isFinite(n) && n > 0) return Math.min(n, 120_000_000);
+  return 25 * 1024 * 1024;
+}
+
+export function maxSlackMediaFilesPerBug(): number {
+  const raw = process.env.AZURE_DEVOPS_MAX_SLACK_MEDIA_FILES?.trim();
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n) && n > 0) return Math.min(n, 20);
+  return 8;
+}
+
+/**
+ * Download a Slack-hosted file using the bot token (requires `files:read`).
+ */
+export async function downloadSlackFileForAdo(
+  downloadUrl: string,
+  botToken: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const res = await fetch(downloadUrl, {
+    headers: { Authorization: `Bearer ${botToken}` },
+    redirect: "follow",
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Slack file HTTP ${res.status}${t ? `: ${t.slice(0, 120)}` : ""}`);
+  }
+  const lenHeader = res.headers.get("content-length");
+  if (lenHeader) {
+    const len = Number.parseInt(lenHeader, 10);
+    if (Number.isFinite(len) && len > maxBytes) {
+      throw new Error(`Slack file too large (${len} bytes, max ${maxBytes})`);
+    }
+  }
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.byteLength > maxBytes) {
+    throw new Error(`Slack file too large (${buf.byteLength} bytes, max ${maxBytes})`);
+  }
+  return buf;
+}
+
+/**
+ * Prepare image/video attachments from a Slack message for upload to ADO (deduped, size-capped, count-capped).
+ */
+export async function collectSlackMessageMediaDownloads(params: {
+  slack: WebClient;
+  botToken: string;
+  channelId: string;
+  messageTs: string;
+  threadTs: string;
+}): Promise<{ downloads: SlackMediaDownload[]; skipped: string[] }> {
+  const skipped: string[] = [];
+  const maxBytes = maxSlackAttachmentBytes();
+  const maxFiles = maxSlackMediaFilesPerBug();
+
+  const elements = await fetchImageAndVideoFilesForSlackMessage(
+    params.slack,
+    params.channelId,
+    params.messageTs,
+    params.threadTs,
+  );
+
+  const seen = new Set<string>();
+  const downloads: SlackMediaDownload[] = [];
+
+  for (const f of elements) {
+    if (downloads.length >= maxFiles) {
+      skipped.push(`max ${maxFiles} media file(s) per bug`);
+      break;
+    }
+    const id = typeof f.id === "string" ? f.id : "";
+    if (id && seen.has(id)) continue;
+    if (id) seen.add(id);
+
+    const url = slackFileDownloadUrl(f);
+    if (!url) {
+      skipped.push(`no download URL for file ${id || f.name || "(unknown)"}`);
+      continue;
+    }
+
+    const declared = typeof f.size === "number" ? f.size : 0;
+    if (declared > maxBytes) {
+      skipped.push(
+        `${pickSlackFileName(f)}: ${declared} bytes exceeds limit (${maxBytes})`,
+      );
+      continue;
+    }
+
+    try {
+      const bytes = await downloadSlackFileForAdo(url, params.botToken, maxBytes);
+      const fileName = pickSlackFileName(f);
+      const contentType =
+        (f.mimetype && f.mimetype.trim()) || "application/octet-stream";
+      downloads.push({
+        fileName,
+        contentType,
+        bytes,
+        slackFileId: id || fileName,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      skipped.push(`${pickSlackFileName(f)}: ${msg}`);
+    }
+  }
+
+  return { downloads, skipped };
+}
