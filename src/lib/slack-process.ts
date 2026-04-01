@@ -54,6 +54,21 @@ import {
 
 export const SLACK_SHORTCUT_CALLBACK_ID = "create_azure_bug";
 
+/**
+ * Orphan `slack_message_bugs` rows (timeout/kill after insert, or crash before cleanup) block retries.
+ * Must exceed route `maxDuration` so a healthy run is not mistaken for stale (this app uses 60s).
+ */
+const STALE_BUG_LOCK_MAX_AGE_MS = 2 * 60 * 1000;
+
+function slackBugLockAgeMs(createdAt: Date | string): number {
+  const t =
+    createdAt instanceof Date
+      ? createdAt.getTime()
+      : new Date(createdAt).getTime();
+  if (!Number.isFinite(t)) return 0;
+  return Date.now() - t;
+}
+
 type ShortcutCtx = {
   teamId: string;
   channelId: string;
@@ -373,7 +388,7 @@ export async function processCreateAzureBugShortcut(
       return;
     }
 
-    const inserted = await getDb()
+    let inserted = await getDb()
       .insert(slackMessageBugs)
       .values({
         teamId,
@@ -413,32 +428,52 @@ export async function processCreateAzureBugShortcut(
           `A bug already exists for this message (work item ${row.workItemId}).`,
           `:repeat: *Bug not created* — work item \`${row.workItemId}\` already exists for this message.`,
         );
-      } else {
+        return;
+      }
+      if (
+        row &&
+        !row.workItemId &&
+        slackBugLockAgeMs(row.createdAt) > STALE_BUG_LOCK_MAX_AGE_MS
+      ) {
+        await getDb()
+          .delete(slackMessageBugs)
+          .where(eq(slackMessageBugs.id, row.id));
+        await logEvent("warn", "Removed stale bug-creation lock (retry allowed)", {
+          teamId,
+          channelId,
+          messageTs,
+          lockAgeMs: slackBugLockAgeMs(row.createdAt),
+        });
+        inserted = await getDb()
+          .insert(slackMessageBugs)
+          .values({
+            teamId,
+            channelId,
+            messageTs,
+            workItemId: null,
+            assignee: null,
+          })
+          .onConflictDoNothing({
+            target: [
+              slackMessageBugs.teamId,
+              slackMessageBugs.channelId,
+              slackMessageBugs.messageTs,
+            ],
+          })
+          .returning({ id: slackMessageBugs.id });
+      }
+      if (inserted.length === 0) {
         await showFailure(
           slack,
           modalSync,
           threadProgress,
           ctx,
           "This message is already being processed.",
-          ":hourglass_flowing_sand: *Bug not created* — this message is already being processed. Try again shortly.",
+          ":hourglass_flowing_sand: *Bug not created* — this message is already being processed. If the bot died mid-run, wait ~2 minutes and try again (the lock expires automatically).",
         );
+        return;
       }
-      return;
     }
-
-    await showProgress(
-      slack,
-      ctx,
-      modalSync,
-      threadProgress,
-      {
-        validate: "done",
-        ai: "active",
-        ado: "pending",
-        finalize: "pending",
-      },
-      "validated_lock_acquired",
-    );
 
     const lockRowId = inserted[0]!.id;
 
@@ -447,6 +482,20 @@ export async function processCreateAzureBugShortcut(
     };
 
     try {
+      await showProgress(
+        slack,
+        ctx,
+        modalSync,
+        threadProgress,
+        {
+          validate: "done",
+          ai: "active",
+          ado: "pending",
+          finalize: "pending",
+        },
+        "validated_lock_acquired",
+      );
+
       let permalink = "";
       try {
         const pl = await slack.chat.getPermalink({
