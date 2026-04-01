@@ -209,6 +209,13 @@ async function showProgress(
   }
 }
 
+function slackThreadAppendDetail(threadLine: string, reason: string): string {
+  const clip =
+    reason.length > 900 ? `${reason.slice(0, 897)}…` : reason;
+  const safe = clip.replace(/```/g, "``\u200b`");
+  return `${threadLine}\n\`\`\`${safe}\`\`\``;
+}
+
 async function showFailure(
   slack: WebClient,
   modalSync: ModalSync | null,
@@ -225,16 +232,21 @@ async function showFailure(
       "failure",
     );
   }
+  /** Ladybug has no modal — put full `reason` (e.g. ADO API body) in the thread so it’s not a blind “Azure error”. */
+  const threadText =
+    !modalSync && threadProgress?.ts && reason.trim()
+      ? slackThreadAppendDetail(threadLine, reason)
+      : threadLine;
   if (threadProgress?.ts) {
     await updateThreadMessage(
       slack,
       threadProgress.channelId,
       threadProgress.ts,
-      threadLine,
+      threadText,
     );
     return;
   }
-  await tryFinalThreadReply(slack, ctx, threadLine);
+  await tryFinalThreadReply(slack, ctx, threadText);
 }
 
 async function showSuccess(
