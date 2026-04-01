@@ -4,19 +4,18 @@ import { getDb } from "@/db";
 import { slackMessageBugs } from "@/db/schema";
 import {
   appendSlackSourceToDescriptionHtml,
-  attachMediaDownloadsToWorkItem,
   buildAdoAcceptanceCriteriaHtml,
   buildAdoDescriptionWithSlackFallback,
   buildAdoTcmReproStepsHtml,
   buildAdoTcmSystemInfoHtml,
   buildSlackBugDeploymentMetaHtml,
   buildSlackMediaEmbedsHtml,
-  buildSlackSourceFooterHtml,
-  addWorkItemComment,
   createAzureBug,
+  type AdoUploadedMediaLink,
   type CreateAzureBugWorkItemDefaults,
+  linkAdoMediaAttachmentsToWorkItem,
   normalizeSeverityForAdo,
-  patchWorkItemSystemDescription,
+  uploadSlackMediaFilesToAzureDevOps,
 } from "@/lib/azure-devops";
 import {
   buildFailureModalView,
@@ -517,33 +516,6 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
-      /**
-       * Pipeline: OpenAI JSON → HTML for Description / TCM tabs; Slack image+video bytes stay in memory
-       * on this request (no temp files). ADO: create work item → upload those bytes as attachments →
-       * patch System.Description = same HTML as create + `<img>` / video links (URLs from ADO).
-       */
-      const slackMediaPrefetchPromise = slackMediaOn
-        ? collectSlackMessageMediaDownloads({
-            slack,
-            botToken,
-            channelId,
-            messageTs,
-            threadTs: ctx.threadTs,
-            maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
-            maxFiles: settings.slackMediaMaxFilesPerBug,
-            interactionMessageFiles: message.files,
-          }).catch((e) => {
-            void logError("slack media prefetch failed (bug may still be created)", e, {
-              channelId,
-              messageTs,
-            });
-            return {
-              downloads: [],
-              skipped: [formatError(e)],
-            };
-          })
-        : Promise.resolve({ downloads: [], skipped: [] as string[] });
-
       const descriptionBodyHtml =
         buildSlackBugDeploymentMetaHtml() +
         buildAdoDescriptionWithSlackFallback(
@@ -559,12 +531,7 @@ export async function processCreateAzureBugShortcut(
           messageText,
         );
 
-      const descriptionHtml = appendSlackSourceToDescriptionHtml(
-        descriptionBodyHtml,
-        { permalink, channelId, messageTs },
-      );
-
-      const reproStepsHtml = buildAdoTcmReproStepsHtml(
+      const reproStepsHtmlBase = buildAdoTcmReproStepsHtml(
         parsed.steps_to_reproduce,
         parsed.actual_result,
       );
@@ -594,9 +561,10 @@ export async function processCreateAzureBugShortcut(
           : [];
 
       let created;
-      let slackMediaPrefetch: Awaited<
-        ReturnType<typeof collectSlackMessageMediaDownloads>
-      > = { downloads: [], skipped: [] };
+      /** Slack→ADO uploads finished before work item create (for inline `<img>` on first save). */
+      let adoMediaLinked: AdoUploadedMediaLink[] = [];
+      let mediaSkippedForAdo: string[] = [];
+      let slackMediaPrefetchDownloadCount = 0;
       let assigneeEmail: string | undefined;
       let assigneeNextIndex = settings.roundRobinIndex;
       try {
@@ -616,43 +584,140 @@ export async function processCreateAzureBugShortcut(
           return pickAssignee(settings, { reporterEmail });
         })();
 
-        const createPromise = assigneePickPromise.then(({ email, nextIndex }) => {
-          assigneeEmail = email;
-          assigneeNextIndex = nextIndex;
-          const wd: CreateAzureBugWorkItemDefaults = {};
-          if (settings.adoTemplateWorkItemId != null) {
-            wd.templateWorkItemId = settings.adoTemplateWorkItemId;
-          }
-          if (settings.adoIterationTeamName?.trim()) {
-            wd.iterationTeamName = settings.adoIterationTeamName.trim();
-          }
-          if (settings.adoReportedFromLabel?.trim()) {
-            wd.reportedFromLabel = settings.adoReportedFromLabel.trim();
-          }
-          return createAzureBug({
-            org,
-            project,
-            pat,
-            workItemType: workItemType || undefined,
-            title: workTitle,
-            descriptionHtml,
-            severity: normalizeSeverityForAdo(parsed.severity),
-            assigneeEmail: email,
-            appendTags: [...appendTags],
-            reproStepsHtml,
-            systemInfoHtml,
-            acceptanceCriteriaHtml,
-            workItemDefaults:
-              Object.keys(wd).length > 0 ? wd : undefined,
-          });
-        });
+        const mediaPreparePromise = slackMediaOn
+          ? (async () => {
+              try {
+                const prefetch = await collectSlackMessageMediaDownloads({
+                  slack,
+                  botToken,
+                  channelId,
+                  messageTs,
+                  threadTs: ctx.threadTs,
+                  maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
+                  maxFiles: settings.slackMediaMaxFilesPerBug,
+                  interactionMessageFiles: message.files,
+                });
+                slackMediaPrefetchDownloadCount = prefetch.downloads.length;
+                if (!prefetch.downloads.length) {
+                  return {
+                    linked: [] as AdoUploadedMediaLink[],
+                    skipped: prefetch.skipped,
+                  };
+                }
+                const { linked, errors } = await uploadSlackMediaFilesToAzureDevOps({
+                  org,
+                  project,
+                  pat,
+                  files: prefetch.downloads.map((d) => ({
+                    fileName: d.fileName,
+                    bytes: d.bytes,
+                    contentType: d.contentType,
+                  })),
+                });
+                for (const err of errors) {
+                  void logEvent("warn", "Slack→ADO media upload failed (single file)", {
+                    channelId,
+                    messageTs,
+                    detail: err.slice(0, 600),
+                  });
+                }
+                return { linked, skipped: prefetch.skipped };
+              } catch (e) {
+                void logError(
+                  "slack media prepare failed (bug may still be created without images)",
+                  e,
+                  { channelId, messageTs },
+                );
+                return {
+                  linked: [] as AdoUploadedMediaLink[],
+                  skipped: [formatError(e)],
+                };
+              }
+            })()
+          : Promise.resolve({
+              linked: [] as AdoUploadedMediaLink[],
+              skipped: [] as string[],
+            });
 
-        const [prefetchResult, workItem] = await Promise.all([
-          slackMediaPrefetchPromise,
-          createPromise,
+        const [assigneeResult, mediaPrep] = await Promise.all([
+          assigneePickPromise,
+          mediaPreparePromise,
         ]);
-        slackMediaPrefetch = prefetchResult;
-        created = workItem;
+
+        assigneeEmail = assigneeResult.email;
+        assigneeNextIndex = assigneeResult.nextIndex;
+        adoMediaLinked = mediaPrep.linked;
+        mediaSkippedForAdo = mediaPrep.skipped;
+
+        if (mediaSkippedForAdo.length) {
+          await logEvent("warn", "slack media skipped for ADO", {
+            channelId,
+            messageTs,
+            detail: mediaSkippedForAdo.join("; ").slice(0, 900),
+          });
+        }
+        if (
+          Array.isArray(message.files) &&
+          message.files.length > 0 &&
+          slackMediaOn &&
+          slackMediaPrefetchDownloadCount === 0
+        ) {
+          await logEvent("error", "Slack→ADO: shortcut message had files but nothing was downloaded", {
+            channelId,
+            messageTs,
+            interactionFileCount: message.files.length,
+            skippedPreview: mediaSkippedForAdo.join("; ").slice(0, 600),
+          });
+        }
+        if (adoMediaLinked.length) {
+          await logEvent("info", "Slack→ADO: media uploaded to attachments API (before work item create)", {
+            uploadCount: adoMediaLinked.length,
+            totalBytes: adoMediaLinked.reduce((n, x) => n + x.size, 0),
+          });
+        }
+
+        const disableTcmTabs =
+          process.env.AZURE_DEVOPS_DISABLE_TCM_TAB_FILL?.trim() === "1";
+        const mediaEmbedHtml = buildSlackMediaEmbedsHtml(adoMediaLinked);
+        const reproStepsHtmlForCreate =
+          !disableTcmTabs && mediaEmbedHtml
+            ? reproStepsHtmlBase + mediaEmbedHtml
+            : reproStepsHtmlBase;
+        const descriptionBodyForCreate =
+          disableTcmTabs && mediaEmbedHtml
+            ? descriptionBodyHtml + mediaEmbedHtml
+            : descriptionBodyHtml;
+        const descriptionHtml = appendSlackSourceToDescriptionHtml(
+          descriptionBodyForCreate,
+          { permalink, channelId, messageTs },
+        );
+
+        const wd: CreateAzureBugWorkItemDefaults = {};
+        if (settings.adoTemplateWorkItemId != null) {
+          wd.templateWorkItemId = settings.adoTemplateWorkItemId;
+        }
+        if (settings.adoIterationTeamName?.trim()) {
+          wd.iterationTeamName = settings.adoIterationTeamName.trim();
+        }
+        if (settings.adoReportedFromLabel?.trim()) {
+          wd.reportedFromLabel = settings.adoReportedFromLabel.trim();
+        }
+
+        created = await createAzureBug({
+          org,
+          project,
+          pat,
+          workItemType: workItemType || undefined,
+          title: workTitle,
+          descriptionHtml,
+          severity: normalizeSeverityForAdo(parsed.severity),
+          assigneeEmail: assigneeResult.email,
+          appendTags: [...appendTags],
+          reproStepsHtml: reproStepsHtmlForCreate,
+          systemInfoHtml,
+          acceptanceCriteriaHtml,
+          workItemDefaults: Object.keys(wd).length > 0 ? wd : undefined,
+        });
       } catch (e) {
         const detail = formatError(e).slice(0, 280);
         await showFailure(
@@ -679,119 +744,46 @@ export async function processCreateAzureBugShortcut(
       }
 
       let mediaAttached = 0;
-      /** Bytes reached ADO upload API (may differ from AttachedFile relation count). */
+      /** Files that reached the ADO upload API before create (for Slack success hint). */
       let slackMediaUploadCount = 0;
       if (slackMediaOn) {
+        slackMediaUploadCount = adoMediaLinked.length;
         slackInteractionDiag({ step: "slack_media_attach_started", workItemId: created.id });
         try {
-          const { downloads, skipped } = slackMediaPrefetch;
-          if (skipped.length) {
-            await logEvent("warn", "slack media skipped for ADO", {
-              channelId,
-              messageTs,
-              workItemId: created.id,
-              detail: skipped.join("; ").slice(0, 900),
-            });
-          }
-          if (
-            Array.isArray(message.files) &&
-            message.files.length > 0 &&
-            downloads.length === 0
-          ) {
-            await logEvent("error", "Slack→ADO: shortcut message had files but nothing was downloaded", {
-              channelId,
-              messageTs,
-              workItemId: created.id,
-              interactionFileCount: message.files.length,
-              skippedPreview: skipped.join("; ").slice(0, 600),
-            });
-          }
-          if (downloads.length) {
-            await logEvent("info", "Slack→ADO: uploading media to work item", {
-              workItemId: created.id,
-              downloadCount: downloads.length,
-              totalBytes: downloads.reduce((n, d) => n + d.bytes.byteLength, 0),
-            });
-            const att = await attachMediaDownloadsToWorkItem({
+          if (adoMediaLinked.length) {
+            const linkRes = await linkAdoMediaAttachmentsToWorkItem({
               org,
               project,
               pat,
               workItemId: created.id,
-              files: downloads.map((d) => ({
-                fileName: d.fileName,
-                bytes: d.bytes,
-                contentType: d.contentType,
-              })),
+              links: adoMediaLinked,
             });
-            mediaAttached = att.attached;
-            slackMediaUploadCount = att.linked.length;
-            if (att.linked.length > 0 && att.attached < att.linked.length) {
-              await logEvent("warn", "ADO: upload succeeded but some AttachedFile relations failed", {
+            mediaAttached = linkRes.attached;
+            if (
+              linkRes.attached < adoMediaLinked.length &&
+              adoMediaLinked.length > 0
+            ) {
+              await logEvent("warn", "ADO: attachment uploads OK but some AttachedFile relations failed", {
                 workItemId: created.id,
-                uploads: att.linked.length,
-                relationsLinked: att.attached,
-                errorsPreview: att.errors.slice(0, 3).join(" | ").slice(0, 800),
+                uploads: adoMediaLinked.length,
+                relationsLinked: linkRes.attached,
+                errorsPreview: linkRes.errors.slice(0, 3).join(" | ").slice(0, 800),
               });
             }
-            for (const err of att.errors) {
-              await logEvent("warn", "ADO media attachment step error", {
+            for (const err of linkRes.errors) {
+              await logEvent("warn", "ADO media relation step error", {
                 workItemId: created.id,
                 detail: err.slice(0, 600),
               });
             }
-            const embedHtml = buildSlackMediaEmbedsHtml(att.linked);
-            if (embedHtml) {
-              try {
-                const descriptionWithMedia =
-                  descriptionBodyHtml +
-                  embedHtml +
-                  buildSlackSourceFooterHtml({
-                    permalink,
-                    channelId,
-                    messageTs,
-                  });
-                await patchWorkItemSystemDescription({
-                  org,
-                  project,
-                  pat,
-                  workItemId: created.id,
-                  descriptionHtml: descriptionWithMedia,
-                });
-                await logEvent("info", "ADO System.Description updated with Slack media block", {
-                  workItemId: created.id,
-                  linkedForEmbed: att.linked.length,
-                });
-              } catch (e) {
-                await logError("patch work item description with Slack media failed", e, {
-                  workItemId: created.id,
-                });
-                try {
-                  const lines = att.linked
-                    .map((x) => `• ${x.fileName}: ${x.url}`)
-                    .join("\n");
-                  await addWorkItemComment({
-                    org,
-                    project,
-                    pat,
-                    workItemId: created.id,
-                    text:
-                      "Screenshots from Slack (inline Description patch failed). Open each link while signed in to Azure DevOps:\n\n" +
-                      lines,
-                  });
-                  await logEvent("info", "ADO discussion comment added with Slack attachment URLs", {
-                    workItemId: created.id,
-                    linkCount: att.linked.length,
-                  });
-                } catch (e2) {
-                  await logError("fallback ADO comment with attachment URLs failed", e2, {
-                    workItemId: created.id,
-                  });
-                }
-              }
-            }
+            await logEvent("info", "Slack→ADO: inline media in initial HTML; AttachedFile relations linked", {
+              workItemId: created.id,
+              linkedForEmbed: adoMediaLinked.length,
+              relationsLinked: linkRes.attached,
+            });
           }
         } catch (e) {
-          await logError("slack→ADO media attachments failed", e, {
+          await logError("slack→ADO media relations failed", e, {
             channelId,
             messageTs,
             workItemId: created.id,
@@ -842,7 +834,7 @@ export async function processCreateAzureBugShortcut(
             slackMediaOn &&
             mediaAttached === 0 &&
             ((message.files?.length ?? 0) > 0 ||
-              slackMediaPrefetch.skipped.length > 0 ||
+              mediaSkippedForAdo.length > 0 ||
               slackMediaUploadCount > 0),
         },
       );

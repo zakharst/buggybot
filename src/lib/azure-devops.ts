@@ -558,7 +558,7 @@ function adoAttachmentUploadRequestContentType(): string {
   return "application/octet-stream";
 }
 
-/** Upload binary to ADO WIT attachments; returns the URL to use in an `AttachedFile` relation. */
+/** Upload binary to ADO WIT attachments; returns the URL to use in an `AttachedFile` relation / `<img src>`. */
 export async function uploadAzureDevOpsAttachment(params: {
   org: string;
   project: string;
@@ -567,7 +567,7 @@ export async function uploadAzureDevOpsAttachment(params: {
   bytes: Uint8Array;
   /** From Slack inference (e.g. image/png); improves handling vs generic octet-stream. */
   contentType?: string;
-}): Promise<{ url: string }> {
+}): Promise<{ url: string; id?: string }> {
   const cap = adoMaxAttachmentBytesPerFile();
   if (params.bytes.byteLength > cap) {
     throw new Error(
@@ -597,32 +597,30 @@ export async function uploadAzureDevOpsAttachment(params: {
     throw new Error(`Azure DevOps attachment upload failed ${res.status}: ${errText}`);
   }
 
-  const data = (await res.json()) as { url?: string };
+  const data = (await res.json()) as { url?: string; id?: string };
   if (!data.url || typeof data.url !== "string") {
     throw new Error("Azure DevOps attachment upload: missing url in response");
   }
-  return { url: data.url };
+  return { url: data.url, id: data.id };
 }
 
-/**
- * Links uploaded attachment URLs to a work item (screenshots/videos from Slack).
- * Returns `linked` for embedding images into Description (same URLs as relations).
- */
-export async function attachMediaDownloadsToWorkItem(params: {
+/** One uploaded Slack screenshot/video ready for `<img src>` and an `AttachedFile` relation. */
+export type AdoUploadedMediaLink = {
+  url: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+};
+
+/** Upload bytes to WIT attachments (no work item yet). Used to embed `<img>` on initial create. */
+export async function uploadSlackMediaFilesToAzureDevOps(params: {
   org: string;
   project: string;
   pat: string;
-  workItemId: number;
   files: Array<{ fileName: string; bytes: Uint8Array; contentType: string }>;
-}): Promise<{
-  attached: number;
-  errors: string[];
-  linked: Array<{ url: string; fileName: string; contentType: string }>;
-}> {
+}): Promise<{ linked: AdoUploadedMediaLink[]; errors: string[] }> {
   const errors: string[] = [];
-  const attachmentUrls: string[] = [];
-  const linked: Array<{ url: string; fileName: string; contentType: string }> =
-    [];
+  const linked: AdoUploadedMediaLink[] = [];
 
   for (const f of params.files) {
     try {
@@ -634,11 +632,11 @@ export async function attachMediaDownloadsToWorkItem(params: {
         bytes: f.bytes,
         contentType: f.contentType,
       });
-      attachmentUrls.push(url);
       linked.push({
         url,
         fileName: f.fileName,
-        contentType: f.contentType.trim() || "application/octet-stream",
+        contentType: f.contentType,
+        size: f.bytes.byteLength,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -646,19 +644,29 @@ export async function attachMediaDownloadsToWorkItem(params: {
     }
   }
 
-  if (!attachmentUrls.length) {
-    return { attached: 0, errors, linked: [] };
+  return { linked, errors };
+}
+
+/**
+ * Adds `AttachedFile` relations after uploads. `resourceSize` matches what the ADO UI sends and
+ * avoids broken previews for API-uploaded files.
+ */
+export async function linkAdoMediaAttachmentsToWorkItem(params: {
+  org: string;
+  project: string;
+  pat: string;
+  workItemId: number;
+  links: AdoUploadedMediaLink[];
+}): Promise<{ attached: number; errors: string[] }> {
+  const errors: string[] = [];
+  if (!params.links.length) {
+    return { attached: 0, errors };
   }
 
   const patchUrl = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
 
-  /**
-   * Link each attachment in its own JSON-PATCH request. Batching multiple
-   * `/relations/-` adds sometimes fails on Azure DevOps; a single failure used
-   * to wipe `linked` and skip Description `<img>` embeds even after successful uploads.
-   */
-  let relationsLinked = 0;
-  for (const attachmentUrl of attachmentUrls) {
+  let attached = 0;
+  for (const item of params.links) {
     const res = await fetch(patchUrl, {
       method: "PATCH",
       headers: {
@@ -671,14 +679,17 @@ export async function attachMediaDownloadsToWorkItem(params: {
           path: "/relations/-",
           value: {
             rel: "AttachedFile",
-            url: attachmentUrl,
+            url: item.url,
+            attributes: {
+              resourceSize: item.size,
+            },
           },
         },
       ]),
     });
 
     if (res.ok) {
-      relationsLinked += 1;
+      attached += 1;
     } else {
       const errText = await res.text();
       errors.push(
@@ -687,10 +698,62 @@ export async function attachMediaDownloadsToWorkItem(params: {
     }
   }
 
-  return { attached: relationsLinked, errors, linked };
+  return { attached, errors };
 }
 
-/** Inline Slack screenshots (and video links) into HTML Description after attachments exist. */
+/**
+ * Uploads Slack media to WIT attachments, then links them to the work item (with `resourceSize`).
+ * Returns `linked` (without byte sizes) for HTML embed helpers.
+ */
+export async function attachMediaDownloadsToWorkItem(params: {
+  org: string;
+  project: string;
+  pat: string;
+  workItemId: number;
+  files: Array<{ fileName: string; bytes: Uint8Array; contentType: string }>;
+}): Promise<{
+  attached: number;
+  errors: string[];
+  linked: Array<{ url: string; fileName: string; contentType: string }>;
+}> {
+  const { linked: uploaded, errors: uploadErrors } =
+    await uploadSlackMediaFilesToAzureDevOps({
+      org: params.org,
+      project: params.project,
+      pat: params.pat,
+      files: params.files,
+    });
+
+  if (!uploaded.length) {
+    return { attached: 0, errors: uploadErrors, linked: [] };
+  }
+
+  const { attached, errors: linkErrors } =
+    await linkAdoMediaAttachmentsToWorkItem({
+      org: params.org,
+      project: params.project,
+      pat: params.pat,
+      workItemId: params.workItemId,
+      links: uploaded,
+    });
+
+  const linked = uploaded.map((x) => ({
+    url: x.url,
+    fileName: x.fileName,
+    contentType: x.contentType.trim() || "application/octet-stream",
+  }));
+
+  return {
+    attached,
+    errors: [...uploadErrors, ...linkErrors],
+    linked,
+  };
+}
+
+/**
+ * Inline Slack screenshots (and video links) into HTML fields (`System.Description` and/or
+ * `Microsoft.VSTS.TCM.ReproSteps`). Call only after each `url` exists (upload response).
+ */
 export function buildSlackMediaEmbedsHtml(
   linked: Array<{ url: string; fileName: string; contentType: string }>,
 ): string {
