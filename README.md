@@ -181,7 +181,8 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 - After adding **`files:read`**, **reinstall** the app and confirm the token starts with `xoxb-`.
 - The app uses **`message.files` from the shortcut payload** (Slack often sends this even when **`conversations.history`** omits `files`), then **`files.info`** if private download URLs are missing.
 - Only **file uploads** on that message are synced (Slack’s `files` on the message). Some clients show images only inside Block Kit without a hosted `files` entry — there is nothing to download.
-- Check **/admin** logs for **`Slack conversations.history failed`**, **`no download URL`**, **`Slack files.info failed`**, **`slack media skipped for ADO`**, or **`ADO media attachment step error`**.
+- Check **/admin** logs for **`Slack conversations.history failed`**, **`no download URL`**, **`Slack files.info failed`**, **`slack media skipped for ADO`**, **`ADO media attachment step error`**, or **`Slack returned an HTML page instead of file bytes`** (almost always missing **`files:read`** / wrong token).
+- Attachments are **linked to the work item one-by-one** (more reliable than a single batch PATCH). Upload still uses the correct **`image/*`** / **`video/*`** `Content-Type` when known.
 
 ---
 

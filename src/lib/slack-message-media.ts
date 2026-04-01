@@ -277,6 +277,17 @@ export async function downloadSlackFileForAdo(
   if (buf.byteLength > maxBytes) {
     throw new Error(`Slack file too large (${buf.byteLength} bytes, max ${maxBytes})`);
   }
+  if (buf.byteLength >= 12) {
+    const probe = new TextDecoder("utf-8", { fatal: false }).decode(
+      buf.slice(0, 64),
+    );
+    const lower = probe.trimStart().toLowerCase();
+    if (lower.startsWith("<!doctype") || lower.startsWith("<html")) {
+      throw new Error(
+        "Slack returned an HTML page instead of file bytes — reinstall the app with files:read, confirm SLACK_BOT_TOKEN, and invite the bot to the channel",
+      );
+    }
+  }
   return buf;
 }
 

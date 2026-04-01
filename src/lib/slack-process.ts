@@ -666,6 +666,19 @@ export async function processCreateAzureBugShortcut(
               detail: skipped.join("; ").slice(0, 900),
             });
           }
+          if (
+            Array.isArray(message.files) &&
+            message.files.length > 0 &&
+            downloads.length === 0
+          ) {
+            await logEvent("error", "Slack→ADO: shortcut message had files but nothing was downloaded", {
+              channelId,
+              messageTs,
+              workItemId: created.id,
+              interactionFileCount: message.files.length,
+              skippedPreview: skipped.join("; ").slice(0, 600),
+            });
+          }
           if (downloads.length) {
             const att = await attachMediaDownloadsToWorkItem({
               org,

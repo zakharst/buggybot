@@ -27,15 +27,16 @@ describe("buildSlackMediaEmbedsHtml", () => {
     expect(html).toContain("href=");
   });
 
-  it("returns empty when nothing maps to image/video", () => {
-    expect(
-      buildSlackMediaEmbedsHtml([
-        {
-          url: "https://x",
-          fileName: "notes.txt",
-          contentType: "application/octet-stream",
-        },
-      ]),
-    ).toBe("");
+  it("adds plain link when type is unknown (e.g. .txt) so Description is not empty", () => {
+    const html = buildSlackMediaEmbedsHtml([
+      {
+        url: "https://x",
+        fileName: "notes.txt",
+        contentType: "application/octet-stream",
+      },
+    ]);
+    expect(html).toContain("href=");
+    expect(html).toContain("notes.txt");
+    expect(html).toContain("could not be inlined");
   });
 });

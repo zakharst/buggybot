@@ -453,6 +453,15 @@ function adoSafeAttachmentFileName(name: string): string {
   return trimmed.length > 120 ? trimmed.slice(0, 120) : trimmed;
 }
 
+/** ADO accepts octet-stream; image/* helps Boards classify screenshots correctly. */
+function adoAttachmentUploadContentType(mime: string | undefined): string {
+  const base = (mime ?? "").split(";")[0].trim().toLowerCase();
+  if (base.startsWith("image/") || base.startsWith("video/")) {
+    return base;
+  }
+  return "application/octet-stream";
+}
+
 /** Upload binary to ADO WIT attachments; returns the URL to use in an `AttachedFile` relation. */
 export async function uploadAzureDevOpsAttachment(params: {
   org: string;
@@ -460,6 +469,8 @@ export async function uploadAzureDevOpsAttachment(params: {
   pat: string;
   fileName: string;
   bytes: Uint8Array;
+  /** From Slack inference (e.g. image/png); improves handling vs generic octet-stream. */
+  contentType?: string;
 }): Promise<{ url: string }> {
   const cap = adoMaxAttachmentBytesPerFile();
   if (params.bytes.byteLength > cap) {
@@ -475,11 +486,12 @@ export async function uploadAzureDevOpsAttachment(params: {
   const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/attachments?${qs.toString()}`;
 
   const body = Buffer.from(params.bytes);
+  const uploadCt = adoAttachmentUploadContentType(params.contentType);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/octet-stream",
+      "Content-Type": uploadCt,
       Authorization: `Basic ${basicAuth(params.pat)}`,
     },
     body,
@@ -525,6 +537,7 @@ export async function attachMediaDownloadsToWorkItem(params: {
         pat: params.pat,
         fileName: f.fileName,
         bytes: f.bytes,
+        contentType: f.contentType,
       });
       attachmentUrls.push(url);
       linked.push({
@@ -544,31 +557,42 @@ export async function attachMediaDownloadsToWorkItem(params: {
 
   const patchUrl = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
 
-  const patchBody = attachmentUrls.map((attachmentUrl) => ({
-    op: "add" as const,
-    path: "/relations/-",
-    value: {
-      rel: "AttachedFile",
-      url: attachmentUrl,
-    },
-  }));
+  /**
+   * Link each attachment in its own JSON-PATCH request. Batching multiple
+   * `/relations/-` adds sometimes fails on Azure DevOps; a single failure used
+   * to wipe `linked` and skip Description `<img>` embeds even after successful uploads.
+   */
+  let relationsLinked = 0;
+  for (const attachmentUrl of attachmentUrls) {
+    const res = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json-patch+json",
+        Authorization: `Basic ${basicAuth(params.pat)}`,
+      },
+      body: JSON.stringify([
+        {
+          op: "add",
+          path: "/relations/-",
+          value: {
+            rel: "AttachedFile",
+            url: attachmentUrl,
+          },
+        },
+      ]),
+    });
 
-  const res = await fetch(patchUrl, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json-patch+json",
-      Authorization: `Basic ${basicAuth(params.pat)}`,
-    },
-    body: JSON.stringify(patchBody),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    errors.push(`link attachments to work item failed ${res.status}: ${errText.slice(0, 500)}`);
-    return { attached: 0, errors, linked: [] };
+    if (res.ok) {
+      relationsLinked += 1;
+    } else {
+      const errText = await res.text();
+      errors.push(
+        `link attachment to work item failed ${res.status}: ${errText.slice(0, 480)}`,
+      );
+    }
   }
 
-  return { attached: attachmentUrls.length, errors, linked };
+  return { attached: relationsLinked, errors, linked };
 }
 
 /** Inline Slack screenshots (and video links) into HTML Description after attachments exist. */
@@ -590,7 +614,10 @@ export function buildSlackMediaEmbedsHtml(
   const vids = linked.filter((x) =>
     lower(effectiveType(x)).startsWith("video/"),
   );
-  if (!imgs.length && !vids.length) return "";
+  const used = new Set([...imgs, ...vids]);
+  const rest = linked.filter((x) => !used.has(x));
+
+  if (!imgs.length && !vids.length && !rest.length) return "";
 
   const parts = [
     '<hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>',
@@ -608,6 +635,13 @@ export function buildSlackMediaEmbedsHtml(
     const label = escapeHtml(x.fileName);
     parts.push(
       `<p><b>Video:</b> <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></p>`,
+    );
+  }
+  for (const x of rest) {
+    const href = escapeHtmlAttr(x.url);
+    const label = escapeHtml(x.fileName);
+    parts.push(
+      `<p><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a> <i>(open attachment — type could not be inlined as image/video)</i></p>`,
     );
   }
   return parts.join("");
