@@ -12,6 +12,7 @@ import {
   buildSlackBugDeploymentMetaHtml,
   buildSlackMediaEmbedsHtml,
   buildSlackSourceFooterHtml,
+  addWorkItemComment,
   createAzureBug,
   normalizeSeverityForAdo,
   patchWorkItemSystemDescription,
@@ -504,6 +505,16 @@ export async function processCreateAzureBugShortcut(
         settings.slackMediaAttachmentsEnabled &&
         process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1";
 
+      if (!slackMediaOn) {
+        await logEvent("info", "Slack→ADO media pipeline disabled for this bug", {
+          channelId,
+          messageTs,
+          adminAttachmentsOff: !settings.slackMediaAttachmentsEnabled,
+          envDisableAttachments:
+            process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() === "1",
+        });
+      }
+
       /**
        * Pipeline: OpenAI JSON → HTML for Description / TCM tabs; Slack image+video bytes stay in memory
        * on this request (no temp files). ADO: create work item → upload those bytes as attachments →
@@ -654,6 +665,8 @@ export async function processCreateAzureBugShortcut(
       }
 
       let mediaAttached = 0;
+      /** Bytes reached ADO upload API (may differ from AttachedFile relation count). */
+      let slackMediaUploadCount = 0;
       if (slackMediaOn) {
         slackInteractionDiag({ step: "slack_media_attach_started", workItemId: created.id });
         try {
@@ -680,6 +693,11 @@ export async function processCreateAzureBugShortcut(
             });
           }
           if (downloads.length) {
+            await logEvent("info", "Slack→ADO: uploading media to work item", {
+              workItemId: created.id,
+              downloadCount: downloads.length,
+              totalBytes: downloads.reduce((n, d) => n + d.bytes.byteLength, 0),
+            });
             const att = await attachMediaDownloadsToWorkItem({
               org,
               project,
@@ -692,6 +710,15 @@ export async function processCreateAzureBugShortcut(
               })),
             });
             mediaAttached = att.attached;
+            slackMediaUploadCount = att.linked.length;
+            if (att.linked.length > 0 && att.attached < att.linked.length) {
+              await logEvent("warn", "ADO: upload succeeded but some AttachedFile relations failed", {
+                workItemId: created.id,
+                uploads: att.linked.length,
+                relationsLinked: att.attached,
+                errorsPreview: att.errors.slice(0, 3).join(" | ").slice(0, 800),
+              });
+            }
             for (const err of att.errors) {
               await logEvent("warn", "ADO media attachment step error", {
                 workItemId: created.id,
@@ -716,10 +743,36 @@ export async function processCreateAzureBugShortcut(
                   workItemId: created.id,
                   descriptionHtml: descriptionWithMedia,
                 });
+                await logEvent("info", "ADO System.Description updated with Slack media block", {
+                  workItemId: created.id,
+                  linkedForEmbed: att.linked.length,
+                });
               } catch (e) {
                 await logError("patch work item description with Slack media failed", e, {
                   workItemId: created.id,
                 });
+                try {
+                  const lines = att.linked
+                    .map((x) => `• ${x.fileName}: ${x.url}`)
+                    .join("\n");
+                  await addWorkItemComment({
+                    org,
+                    project,
+                    pat,
+                    workItemId: created.id,
+                    text:
+                      "Screenshots from Slack (inline Description patch failed). Open each link while signed in to Azure DevOps:\n\n" +
+                      lines,
+                  });
+                  await logEvent("info", "ADO discussion comment added with Slack attachment URLs", {
+                    workItemId: created.id,
+                    linkCount: att.linked.length,
+                  });
+                } catch (e2) {
+                  await logError("fallback ADO comment with attachment URLs failed", e2, {
+                    workItemId: created.id,
+                  });
+                }
               }
             }
           }
@@ -775,7 +828,8 @@ export async function processCreateAzureBugShortcut(
             slackMediaOn &&
             mediaAttached === 0 &&
             ((message.files?.length ?? 0) > 0 ||
-              slackMediaPrefetch.skipped.length > 0),
+              slackMediaPrefetch.skipped.length > 0 ||
+              slackMediaUploadCount > 0),
         },
       );
 

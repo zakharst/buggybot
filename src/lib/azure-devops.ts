@@ -718,6 +718,23 @@ export function buildSlackMediaEmbedsHtml(
       `<p><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a> <i>(open attachment — type could not be inlined as image/video)</i></p>`,
     );
   }
+
+  /** Boards often hide broken <img> (no auth on subresource); links always work when signed in. */
+  if (linked.length) {
+    parts.push(
+      '<p><b>Open attachments in Azure DevOps</b> <i>(if previews above are blank)</i></p>',
+    );
+    parts.push("<ul>");
+    for (const x of linked) {
+      const href = escapeHtmlAttr(x.url);
+      const label = escapeHtml(x.fileName);
+      parts.push(
+        `<li><a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></li>`,
+      );
+    }
+    parts.push("</ul>");
+  }
+
   return parts.join("");
 }
 

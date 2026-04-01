@@ -13,6 +13,8 @@ describe("buildSlackMediaEmbedsHtml", () => {
     expect(html).toContain("<img ");
     expect(html).toContain("slack-shot.png");
     expect(html).toContain("Screenshots and media (Slack)");
+    expect(html).toContain("Open attachments in Azure DevOps");
+    expect(html).toContain("<ul>");
   });
 
   it("adds video link for mp4", () => {
