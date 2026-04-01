@@ -9,8 +9,42 @@ import { verifySlackRequest } from "@/lib/slack-verify";
 import { fetchSlackMessageForBugShortcut } from "@/lib/slack-fetch-message";
 import type { SlackBugShortcutPayload } from "@/lib/slack-payload";
 
-/** Slack Events API `reaction` field for :ladybug: (no colons). */
+/** Default Slack shortcode for :ladybug: (Events API `reaction` value, no colons). */
 export const LADYBUG_REACTION_NAME = "ladybug";
+
+/**
+ * Allowed `reaction` values for triggering the bug pipeline. Default `ladybug`; override if your
+ * workspace uses a custom emoji name (check payload with `SLACK_DEBUG_REACTIONS=1`).
+ */
+export function getLadybugReactionNames(): string[] {
+  const raw = process.env.SLACK_LADYBUG_REACTION_NAMES?.trim();
+  if (raw) {
+    return raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }
+  return [LADYBUG_REACTION_NAME];
+}
+
+function extractEventCallbackTeamId(body: Record<string, unknown>): string | null {
+  const tid = body.team_id;
+  if (typeof tid === "string" && tid.trim()) return tid.trim();
+
+  const team = body.team;
+  if (team && typeof team === "object" && team !== null) {
+    const id = (team as { id?: string }).id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+
+  const auth = body.authorizations;
+  if (Array.isArray(auth) && auth[0] && typeof auth[0] === "object") {
+    const id = (auth[0] as { team_id?: string }).team_id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+
+  return null;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object";
@@ -33,20 +67,18 @@ export function parseLadybugReactionContext(
   if (!isRecord(body)) return null;
   if (body.type !== "event_callback") return null;
 
-  const teamId =
-    typeof body.team_id === "string"
-      ? body.team_id
-      : typeof body.team === "object" &&
-          body.team !== null &&
-          typeof (body.team as { id?: string }).id === "string"
-        ? (body.team as { id: string }).id
-        : null;
+  const teamId = extractEventCallbackTeamId(body);
   if (!teamId) return null;
 
   const ev = body.event;
   if (!isRecord(ev)) return null;
   if (ev.type !== "reaction_added") return null;
-  if (ev.reaction !== LADYBUG_REACTION_NAME) return null;
+
+  const reactionRaw = ev.reaction;
+  const reaction =
+    typeof reactionRaw === "string" ? reactionRaw.trim().toLowerCase() : "";
+  const allowed = getLadybugReactionNames();
+  if (!reaction || !allowed.includes(reaction)) return null;
 
   const item = ev.item;
   if (!isRecord(item)) return null;
@@ -143,6 +175,24 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ challenge: ch }), {
       status: 200,
       headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
+  }
+
+  if (
+    process.env.SLACK_DEBUG_REACTIONS?.trim() === "1" &&
+    isRecord(body) &&
+    body.type === "event_callback" &&
+    isRecord(body.event) &&
+    body.event.type === "reaction_added"
+  ) {
+    const ev = body.event;
+    const item = isRecord(ev.item) ? ev.item : null;
+    await logEvent("info", "[slack-debug] reaction_added event", {
+      reaction: typeof ev.reaction === "string" ? ev.reaction : null,
+      itemType: item && typeof item.type === "string" ? item.type : null,
+      channel:
+        item && typeof item.channel === "string" ? item.channel : null,
+      allowedLadybugNames: getLadybugReactionNames(),
     });
   }
 

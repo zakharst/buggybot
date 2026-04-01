@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LADYBUG_REACTION_NAME,
   parseLadybugReactionContext,
 } from "@/lib/slack-events";
 
 describe("parseLadybugReactionContext", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("returns null for url_verification", () => {
     expect(
       parseLadybugReactionContext({
@@ -64,6 +68,67 @@ describe("parseLadybugReactionContext", () => {
       }),
     ).toEqual({
       teamId: "T88",
+      channelId: "C1",
+      messageTs: "1.0",
+      userId: "U1",
+    });
+  });
+
+  it("reads team id from authorizations[0].team_id (Enterprise Grid style)", () => {
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        authorizations: [{ team_id: "TGRID", enterprise_id: "E1" }],
+        event: {
+          type: "reaction_added",
+          user: "U1",
+          reaction: "ladybug",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).toEqual({
+      teamId: "TGRID",
+      channelId: "C1",
+      messageTs: "1.0",
+      userId: "U1",
+    });
+  });
+
+  it("accepts reaction names from SLACK_LADYBUG_REACTION_NAMES", () => {
+    vi.stubEnv("SLACK_LADYBUG_REACTION_NAMES", "bug_ado, ladybug");
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "reaction_added",
+          user: "U1",
+          reaction: "bug_ado",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).toEqual({
+      teamId: "T1",
+      channelId: "C1",
+      messageTs: "1.0",
+      userId: "U1",
+    });
+  });
+
+  it("matches reaction case-insensitively", () => {
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "reaction_added",
+          user: "U1",
+          reaction: "LADYBUG",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).toEqual({
+      teamId: "T1",
       channelId: "C1",
       messageTs: "1.0",
       userId: "U1",

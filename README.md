@@ -147,7 +147,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 **Message shortcuts** (“On messages”) send `payload.type === "message_action"` (not `"shortcut"`). The app accepts **both** `message_action` and global `shortcut` payloads with callback ID **`create_azure_bug`**.
 
-**Optional — :ladybug: reaction:** enable **Event Subscriptions** and subscribe to bot event **`reaction_added`**. Request URL: **`${APP_BASE_URL}/api/slack/events`**. When someone adds the **ladybug** emoji to a **message**, the app loads that message from the Slack API and runs the **same** create-bug pipeline as the shortcut (thread reply + ADO; **no** status modal, since there is no `trigger_id`). Add bot scope **`reactions:read`**, reinstall the app, and ensure the bot is **in the channel**.
+**Optional — :ladybug: reaction:** enable **Event Subscriptions** and subscribe to bot event **`reaction_added`**. Request URL: **`${APP_BASE_URL}/api/slack/events`**. When someone adds the **ladybug** emoji to a **message**, the app loads that message from the Slack API and runs the **same** create-bug pipeline as the shortcut (thread reply + ADO; **no** status modal, since there is no `trigger_id`). Add bot scope **`reactions:read`**, reinstall the app, and ensure the bot is **in the channel** (invite `/invite @YourBot` or it will not receive events). **Enterprise Grid:** team id is also read from **`authorizations[0].team_id`** if the outer `team_id` is missing. **Custom emoji:** the Events API sends a **short name** (not always `ladybug`); set **`SLACK_DEBUG_REACTIONS=1`**, redeploy, add any reaction once, then check **`/admin` → Logs** for `[slack-debug] reaction_added event` and copy the `reaction` value into **`SLACK_LADYBUG_REACTION_NAMES`** (comma-separated list allowed).
 
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
 
@@ -281,6 +281,8 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_MAX_ATTACHMENT_BYTES` | Optional. **Azure DevOps Services** hard limit is **60 MB** per attachment (see [object limits](https://learn.microsoft.com/en-us/azure/devops/organizations/settings/work/object-limits)). Default cap in app matches that. On **DevOps Server**, set this if your collection allows a higher per-file size. |
 | `SLACK_MEDIA_MAX_TOTAL_BYTES` | Optional. Approximate **sum** of all Slack image/video bytes held in RAM before ADO upload (default **~220 MiB**). Lower on small function memory; raise if you need many large files per message. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
+| `SLACK_DEBUG_REACTIONS` | Set to `1` to log every **`reaction_added`** (`reaction` name, `item.type`, channel) so you can match **custom emoji** names to **`SLACK_LADYBUG_REACTION_NAMES`**. |
+| `SLACK_LADYBUG_REACTION_NAMES` | Optional. Comma-separated Events API **`reaction`** values that trigger the bug pipeline (default **`ladybug`**). Use when your workspace uses a custom ladybug-style emoji with another API name. |
 | `SLACK_BOT_USER_ID` | Optional. If set, **:ladybug:** reactions from this user id are ignored (e.g. bot’s own `U…` from `auth.test`). |
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
@@ -312,7 +314,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 - **`logEvent(level, message, meta?)`** — writes to `app_logs` (failures fall back to `console.error`).
 - **`logError(message, err, meta?)`** — formats `err` with **`formatError`**, logs to DB + **stderr**.
 - **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; schedules the shortcut pipeline with **`waitUntil()`** after a fast 200 ack; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
-- **`POST /api/slack/events`** — Event Subscriptions JSON; **`url_verification`** challenge; **`reaction_added`** with reaction **`ladybug`** schedules the same pipeline (no modal). Signature verification matches Interactivity.
+- **`POST /api/slack/events`** — Event Subscriptions JSON; **`url_verification`** challenge; **`reaction_added`** whose **`reaction`** is in **`SLACK_LADYBUG_REACTION_NAMES`** (default **`ladybug`**) schedules the same pipeline (no modal). Signature verification matches Interactivity.
 - **Shortcut / reaction pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
 
 ---
