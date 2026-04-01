@@ -11,6 +11,46 @@ function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
 }
 
+async function fetchWorkItemFieldString(params: {
+  org: string;
+  project: string;
+  pat: string;
+  workItemId: number;
+  fieldRef: string;
+}): Promise<string | null> {
+  const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Basic ${basicAuth(params.pat)}` },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { fields?: Record<string, unknown> };
+  const v = data.fields?.[params.fieldRef];
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+/**
+ * Resolves the team’s current sprint iteration path (same as Boards “current” iteration).
+ * @param teamName — exact team name from Project Settings → Teams (e.g. `Digital-Services Team`).
+ */
+async function fetchTeamCurrentIterationPath(params: {
+  org: string;
+  project: string;
+  pat: string;
+  teamName: string;
+}): Promise<string | null> {
+  const base = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/${encodeURIComponent(params.teamName)}/_apis/work/teamsettings/iterations`;
+  const u = new URL(base);
+  u.searchParams.set("$timeframe", "current");
+  u.searchParams.set("api-version", "7.1");
+  const res = await fetch(u.toString(), {
+    headers: { Authorization: `Basic ${basicAuth(params.pat)}` },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { value?: Array<{ path?: string }> };
+  const p = data.value?.[0]?.path;
+  return typeof p === "string" && p.trim() ? p.trim() : null;
+}
+
 /** Map free-form model label to ADO severity field (empty string → medium). */
 export function normalizeSeverityForAdo(raw: string): "low" | "medium" | "high" | "critical" {
   const s = raw.toLowerCase().trim();
@@ -377,6 +417,41 @@ export async function createAzureBug(params: {
   };
   dropEmptyAdoFieldValues(mergedContext);
 
+  /**
+   * Optional: copy Area from a reference work item and set Iteration to the team’s
+   * current sprint (overrides `System.AreaPath` / `System.IterationPath` from
+   * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` when the API calls succeed).
+   */
+  const templateIdRaw = process.env.AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID?.trim();
+  if (templateIdRaw) {
+    const tid = Number(templateIdRaw);
+    if (Number.isFinite(tid) && tid > 0) {
+      const areaPath = await fetchWorkItemFieldString({
+        org: params.org,
+        project: params.project,
+        pat: params.pat,
+        workItemId: tid,
+        fieldRef: "System.AreaPath",
+      });
+      if (areaPath) {
+        mergedContext["System.AreaPath"] = areaPath;
+      }
+    }
+  }
+
+  const iterationTeam = process.env.AZURE_DEVOPS_ITERATION_TEAM_NAME?.trim();
+  if (iterationTeam) {
+    const iterationPath = await fetchTeamCurrentIterationPath({
+      org: params.org,
+      project: params.project,
+      pat: params.pat,
+      teamName: iterationTeam,
+    });
+    if (iterationPath) {
+      mergedContext["System.IterationPath"] = iterationPath;
+    }
+  }
+
   const reportedFromRef = resolvedReportedFromFieldRef();
   /** Exact picklist label from process (case-sensitive). ado:list-bug-fields lists allowed values. */
   const reportedFromValue =
@@ -453,12 +528,12 @@ function adoSafeAttachmentFileName(name: string): string {
   return trimmed.length > 120 ? trimmed.slice(0, 120) : trimmed;
 }
 
-/** ADO accepts octet-stream; image/* helps Boards classify screenshots correctly. */
-function adoAttachmentUploadContentType(mime: string | undefined): string {
-  const base = (mime ?? "").split(";")[0].trim().toLowerCase();
-  if (base.startsWith("image/") || base.startsWith("video/")) {
-    return base;
-  }
+/**
+ * WIT attachment upload POST must use `application/octet-stream` on many orgs;
+ * `image/*` / `video/*` on the request body triggers 400 (VssRequestContentTypeNotSupportedException).
+ * Real MIME is still used for Description `<img>` / links via {@link attachMediaDownloadsToWorkItem} `linked`.
+ */
+function adoAttachmentUploadRequestContentType(): string {
   return "application/octet-stream";
 }
 
@@ -486,12 +561,11 @@ export async function uploadAzureDevOpsAttachment(params: {
   const url = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/attachments?${qs.toString()}`;
 
   const body = Buffer.from(params.bytes);
-  const uploadCt = adoAttachmentUploadContentType(params.contentType);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": uploadCt,
+      "Content-Type": adoAttachmentUploadRequestContentType(),
       Authorization: `Basic ${basicAuth(params.pat)}`,
     },
     body,
