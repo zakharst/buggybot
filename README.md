@@ -113,6 +113,14 @@ buggybot/
    npm run build && npm start
    ```
 
+8. **Automated tests** (no live Slack, OpenAI, or Azure DevOps):
+
+   ```bash
+   npm test
+   ```
+
+   [Vitest](https://vitest.dev/) runs **`src/**/*.test.ts`**: Slack [request signature](https://api.slack.com/authentication/verifying-requests-from-slack) (`verifySlackRequest`), shortcut payload normalization, **Slack file rows** that look like `application/octet-stream` + `filetype: binary` but are really PNG/JPEG (the common screenshot case), **`buildSlackMediaEmbedsHtml`** so Description gets `<img>` even when the stored MIME is wrong, **`bugIntakeSchema`** (environment/platform normalization), **assignment** modes, and **ADO attachment** env defaults. Slack downloads are tested with a **mock** `fetch` and a stub `WebClient` — you do not need tokens or network to catch regressions in the media pipeline.
+
 ---
 
 ## 3. SQL schema (small database)
