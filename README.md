@@ -1,6 +1,6 @@
 # Buggybot
 
-Next.js **App Router** + **TypeScript** app for **Vercel**: Slack **message shortcuts** over **HTTP Interactivity** (no Socket Mode), **Azure DevOps REST** only, **OpenAI** for structured bug JSON, and **Postgres** via **[Neon through the Vercel Marketplace](https://vercel.com/marketplace/neon)** (recommended) for settings, idempotency, and logs. The app reads **`DATABASE_URL` only**—the standard pooled `postgresql://…` string Vercel injects after you connect Neon. **No Redis, queues, Docker, or self-hosted database.**
+Next.js **App Router** + **TypeScript** app for **Vercel**: Slack **message shortcuts** over **HTTP Interactivity** (no Socket Mode), optional **Event Subscriptions** so a **:ladybug:** reaction runs the same bug pipeline, **Azure DevOps REST** only, **OpenAI** for structured bug JSON, and **Postgres** via **[Neon through the Vercel Marketplace](https://vercel.com/marketplace/neon)** (recommended) for settings, idempotency, and logs. The app reads **`DATABASE_URL` only**—the standard pooled `postgresql://…` string Vercel injects after you connect Neon. **No Redis, queues, Docker, or self-hosted database.**
 
 ---
 
@@ -38,7 +38,9 @@ buggybot/
 │   │   │   └── actions.ts     # Server Actions (re-check Basic auth)
 │   │   └── api/
 │   │       └── slack/
-│   │           └── route.ts   # Slack Interactivity POST
+│   │           ├── route.ts           # Slack Interactivity POST
+│   │           ├── interactions/      # same handler (canonical path)
+│   │           └── events/route.ts    # Event Subscriptions (reaction_added / ladybug)
 │   ├── db/
 │   │   ├── index.ts
 │   │   └── schema.ts          # Drizzle schema
@@ -145,6 +147,8 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 **Message shortcuts** (“On messages”) send `payload.type === "message_action"` (not `"shortcut"`). The app accepts **both** `message_action` and global `shortcut` payloads with callback ID **`create_azure_bug`**.
 
+**Optional — :ladybug: reaction:** enable **Event Subscriptions** and subscribe to bot event **`reaction_added`**. Request URL: **`${APP_BASE_URL}/api/slack/events`**. When someone adds the **ladybug** emoji to a **message**, the app loads that message from the Slack API and runs the **same** create-bug pipeline as the shortcut (thread reply + ADO; **no** status modal, since there is no `trigger_id`). Add bot scope **`reactions:read`**, reinstall the app, and ensure the bot is **in the channel**.
+
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
 
 2. **OAuth & Permissions** → **Scopes** → **Bot Token Scopes** — add:
@@ -154,6 +158,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
    - `files:read` — download **screenshots and videos** from the message to attach in Azure DevOps  
    - `channels:history` — read the message (including `files`) in public channels  
    - `groups:history` — same in private channels the bot is in  
+   - `reactions:read` — **only if** you use **Event Subscriptions** + **:ladybug:** to trigger bugs  
 
 3. **Install to Workspace** → copy **Bot User OAuth Token** → `SLACK_BOT_TOKEN` in `.env`.
 
@@ -163,6 +168,12 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
    - Turn **Interactivity** **On**.
    - **Request URL**: **`${APP_BASE_URL}/api/slack/interactions`** (set `APP_BASE_URL` to your public origin, e.g. `https://buggybot.vercel.app`).  
      Local dev: use [ngrok](https://ngrok.com) with the same path — Slack cannot reach `localhost` directly.
+
+5b. **Event Subscriptions** (optional, for **:ladybug:** on messages):
+   - Turn **Events** **On**.
+   - **Request URL**: **`${APP_BASE_URL}/api/slack/events`** (same signing secret as Interactivity).
+   - Under **Subscribe to bot events**, add **`reaction_added`**.
+   - Slack will send a `url_verification` challenge once; the app responds automatically.
 
 6. Under **Shortcuts** → **Create New Shortcut**:
    - **Location**: **On messages**
@@ -205,7 +216,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 7. Set **`APP_BASE_URL`** to your production origin with **no trailing slash**, e.g. `https://buggybot.vercel.app`. The `/admin` page uses **only** this variable to show the Slack Interactivity URL (no `VERCEL_URL` / `NEXT_PUBLIC_*` fallbacks).
 
-8. Deploy. In Slack, set **Interactivity Request URL** to the value shown in **Admin** (same as `APP_BASE_URL` + `/api/slack/interactions`).
+8. Deploy. In Slack, set **Interactivity Request URL** to the value shown in **Admin** (same as `APP_BASE_URL` + `/api/slack/interactions`). If you use reactions, set **Event Subscriptions** URL to **`APP_BASE_URL` + `/api/slack/events`** (also shown in **Admin**).
 
 9. **Vercel** → **Project** → **Settings** → **Functions**: this app sets `maxDuration = 60` on the Slack API routes. Background work after the empty 200 ack uses **`waitUntil()`** from `@vercel/functions` so OpenAI + Azure DevOps + Slack replies still run on serverless (unlike relying on `after()` alone, which may not extend the invocation on all runtimes).
 
@@ -239,7 +250,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_PROJECT` | **Yes** | Project name |
 | `ADMIN_BASIC_AUTH_USER` | **Yes** | Basic auth username for `/admin` |
 | `ADMIN_BASIC_AUTH_PASSWORD` | **Yes** | Basic auth password for `/admin` |
-| `APP_BASE_URL` | **Yes** (prod) | Public site origin only, e.g. `https://buggybot.vercel.app` (no trailing slash). Admin shows `${APP_BASE_URL}/api/slack/interactions` for Slack. If unset, admin shows a warning instead of guessing. |
+| `APP_BASE_URL` | **Yes** (prod) | Public site origin only, e.g. `https://buggybot.vercel.app` (no trailing slash). Admin shows Slack **Interactivity** and **Event Subscriptions** URLs (`/api/slack/interactions`, `/api/slack/events`). If unset, admin shows a warning instead of guessing. |
 
 **Optional:**
 
@@ -266,6 +277,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_MAX_ATTACHMENT_BYTES` | Optional. **Azure DevOps Services** hard limit is **60 MB** per attachment (see [object limits](https://learn.microsoft.com/en-us/azure/devops/organizations/settings/work/object-limits)). Default cap in app matches that. On **DevOps Server**, set this if your collection allows a higher per-file size. |
 | `SLACK_MEDIA_MAX_TOTAL_BYTES` | Optional. Approximate **sum** of all Slack image/video bytes held in RAM before ADO upload (default **~220 MiB**). Lower on small function memory; raise if you need many large files per message. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
+| `SLACK_BOT_USER_ID` | Optional. If set, **:ladybug:** reactions from this user id are ignored (e.g. bot’s own `U…` from `auth.test`). |
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
 
@@ -292,13 +304,14 @@ To sign out: close the session using the browser’s password manager / “sign 
 - **`logEvent(level, message, meta?)`** — writes to `app_logs` (failures fall back to `console.error`).
 - **`logError(message, err, meta?)`** — formats `err` with **`formatError`**, logs to DB + **stderr**.
 - **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; schedules the shortcut pipeline with **`waitUntil()`** after a fast 200 ack; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
-- **Shortcut pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
+- **`POST /api/slack/events`** — Event Subscriptions JSON; **`url_verification`** challenge; **`reaction_added`** with reaction **`ladybug`** schedules the same pipeline (no modal). Signature verification matches Interactivity.
+- **Shortcut / reaction pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
 
 ---
 
 ## 9. Behavior summary
 
-- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug (**`Environment: dev|prod`** and **`Platform: iOS|Android`** from the message; **`Production`** tag when environment is **prod**), **`Build:`** from env, Slack media **downloaded from Slack, attached, and embedded** in **Description** (`<img>` for images), **no assignee**, thread reply with work item link.
+- Message shortcut **`create_azure_bug`** or **:ladybug:** on a message (Events API) → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug (**`Environment: dev|prod`** and **`Platform: iOS|Android`** from the message; **`Production`** tag when environment is **prod**), **`Build:`** from env, Slack media **downloaded from Slack, attached, and embedded** in **Description** (`<img>` for images), assignment per **/admin**, thread reply with work item link. Reactions use the **reacting user** as the shortcut “user” (e.g. reporter assignment).
 
 ## License
 

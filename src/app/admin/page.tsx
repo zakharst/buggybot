@@ -6,11 +6,11 @@ import { AdminPanel } from "./admin-panel";
 
 export const dynamic = "force-dynamic";
 
-function slackInteractionsUrlFromEnv(): string | null {
+function slackUrlFromEnv(path: string): string | null {
   const raw = process.env.APP_BASE_URL?.trim();
   if (!raw) return null;
   const base = raw.replace(/\/$/, "");
-  return `${base}/api/slack/interactions`;
+  return `${base}${path}`;
 }
 
 export default async function AdminPage() {
@@ -19,7 +19,7 @@ export default async function AdminPage() {
   try {
     [settings, logs] = await Promise.all([
       getSettings(),
-      getRecentLogs(80),
+      getRecentLogs(250),
     ]);
   } catch (e) {
     const detail = formatError(e);
@@ -56,7 +56,8 @@ export default async function AdminPage() {
       settings={settings}
       logs={logs}
       slackMediaPerFileCapMb={slackMediaPerFileCapMegabytes()}
-      slackInteractionsUrl={slackInteractionsUrlFromEnv()}
+      slackInteractionsUrl={slackUrlFromEnv("/api/slack/interactions")}
+      slackEventsUrl={slackUrlFromEnv("/api/slack/events")}
       envStatus={{
         hasOpenAi: Boolean(process.env.OPENAI_API_KEY),
         hasSlackSigning: Boolean(process.env.SLACK_SIGNING_SECRET),

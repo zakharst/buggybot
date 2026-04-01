@@ -12,6 +12,24 @@ import type { appLogs } from "@/db/schema";
 
 type LogRow = InferSelectModel<typeof appLogs>;
 
+/** Shown at the top of /admin so Slack→ADO/media issues are visible without scrolling. */
+const PIPELINE_LOG_MESSAGE_RE =
+  /slack|openai|azure|(^|[^a-z])ado([^a-z]|$)|attachment|media|files\.|conversations\.|work item|bug created|shortcut|interactions|prefetch|description|signing|payload|modal|waituntil|wit\/|html page instead of file|skipped for ado|link attachment/i;
+
+function logMetaString(meta: Record<string, unknown> | null): string {
+  if (!meta || typeof meta !== "object") return "";
+  try {
+    return JSON.stringify(meta);
+  } catch {
+    return "";
+  }
+}
+
+function logMatchesPipeline(row: LogRow): boolean {
+  if (PIPELINE_LOG_MESSAGE_RE.test(row.message)) return true;
+  return PIPELINE_LOG_MESSAGE_RE.test(logMetaString(row.meta));
+}
+
 function SubmitButton() {
   const { pending } = useFormStatus();
   return (
@@ -41,6 +59,8 @@ export function AdminPanel(props: {
   };
   /** Full Slack Interactivity Request URL, or null if APP_BASE_URL is unset. */
   slackInteractionsUrl: string | null;
+  /** Event Subscriptions Request URL (`reaction_added` / :ladybug:), or null. */
+  slackEventsUrl: string | null;
   /** Per-file MB cap (ADO Services = 60; on-prem can raise via env). */
   slackMediaPerFileCapMb: number;
 }) {
@@ -49,6 +69,7 @@ export function AdminPanel(props: {
     logs,
     envStatus,
     slackInteractionsUrl,
+    slackEventsUrl,
     slackMediaPerFileCapMb,
   } = props;
   const [saveState, formAction] = useActionState<
@@ -71,6 +92,8 @@ export function AdminPanel(props: {
           </p>
         </div>
       </div>
+
+      <AdminActivityDigest logs={logs} />
 
       <section className="mt-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
         <h2 className="text-lg font-medium">Secrets (environment)</h2>
@@ -107,25 +130,43 @@ export function AdminPanel(props: {
             <Status ok={envStatus.hasAppBaseUrl} />
           </li>
         </ul>
-        <p className="mt-4 text-xs text-[var(--muted)]">
-          Slack interactions URL (Interactivity Request URL):{" "}
-          {slackInteractionsUrl ? (
-            <code className="break-all text-[var(--accent)]">
-              {slackInteractionsUrl}
-            </code>
-          ) : (
-            <span className="text-[var(--danger)]">
-              Set{" "}
-              <code className="text-[var(--accent)]">APP_BASE_URL</code> to your
-              public site origin (e.g.{" "}
-              <code className="text-[var(--accent)]">
-                https://buggybot.vercel.app
+        <div className="mt-4 space-y-2 text-xs text-[var(--muted)]">
+          <p>
+            Slack <strong className="font-medium text-[var(--text)]">
+              Interactivity
+            </strong>{" "}
+            (shortcuts):{" "}
+            {slackInteractionsUrl ? (
+              <code className="break-all text-[var(--accent)]">
+                {slackInteractionsUrl}
               </code>
-              , no trailing slash). No automatic preview — avoids wrong URLs on
-              Vercel preview deployments.
-            </span>
-          )}
-        </p>
+            ) : (
+              <span className="text-[var(--danger)]">
+                Set{" "}
+                <code className="text-[var(--accent)]">APP_BASE_URL</code> for a
+                full URL preview.
+              </span>
+            )}
+          </p>
+          <p>
+            Slack{" "}
+            <strong className="font-medium text-[var(--text)]">
+              Event Subscriptions
+            </strong>{" "}
+            (<code className="text-[var(--accent)]">reaction_added</code> /{" "}
+            :ladybug:):{" "}
+            {slackEventsUrl ? (
+              <code className="break-all text-[var(--accent)]">
+                {slackEventsUrl}
+              </code>
+            ) : (
+              <span className="text-[var(--danger)]">
+                Same as above — needs{" "}
+                <code className="text-[var(--accent)]">APP_BASE_URL</code>.
+              </span>
+            )}
+          </p>
+        </div>
       </section>
 
       <form action={formAction} className="mt-10 space-y-8">
@@ -331,45 +372,13 @@ export function AdminPanel(props: {
       </form>
 
       <section className="mt-12 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
-        <h2 className="text-lg font-medium">Recent logs</h2>
+        <h2 className="text-lg font-medium">All recent log entries</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Newest first (same data as above, full table). Use the digest at the top
+          for Slack screenshots and Azure DevOps attachment issues.
+        </p>
         <div className="mt-4 max-h-96 overflow-auto text-sm">
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="border-b border-[var(--border)] text-[var(--muted)]">
-                <th className="py-2 pr-4 font-medium">Time</th>
-                <th className="py-2 pr-4 font-medium">Level</th>
-                <th className="py-2 font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="py-4 text-[var(--muted)]">
-                    No log entries yet.
-                  </td>
-                </tr>
-              ) : (
-                logs.map((row) => (
-                  <tr key={row.id} className="border-b border-[var(--border)]/60 align-top">
-                    <td className="py-2 pr-4 whitespace-nowrap text-[var(--muted)]">
-                      {row.createdAt
-                        ? new Date(row.createdAt).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td className="py-2 pr-4">{row.level}</td>
-                    <td className="py-2">
-                      {row.message}
-                      {row.meta ? (
-                        <pre className="mt-1 max-w-full overflow-x-auto text-xs text-[var(--muted)]">
-                          {JSON.stringify(row.meta, null, 2)}
-                        </pre>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          <LogTable rows={logs} emptyLabel="No log entries yet." />
         </div>
       </section>
     </main>
@@ -381,5 +390,120 @@ function Status({ ok }: { ok: boolean }) {
     <span className="text-[var(--ok)]">set</span>
   ) : (
     <span className="text-[var(--danger)]">missing</span>
+  );
+}
+
+function LogTable({
+  rows,
+  emptyLabel,
+}: {
+  rows: LogRow[];
+  emptyLabel: string;
+}) {
+  return (
+    <table className="w-full border-collapse text-left">
+      <thead>
+        <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+          <th className="py-2 pr-4 font-medium">Time</th>
+          <th className="py-2 pr-4 font-medium">Level</th>
+          <th className="py-2 font-medium">Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={3} className="py-4 text-[var(--muted)]">
+              {emptyLabel}
+            </td>
+          </tr>
+        ) : (
+          rows.map((row) => (
+            <tr
+              key={row.id}
+              className="border-b border-[var(--border)]/60 align-top"
+            >
+              <td className="py-2 pr-4 whitespace-nowrap text-[var(--muted)]">
+                {row.createdAt
+                  ? new Date(row.createdAt).toLocaleString()
+                  : "—"}
+              </td>
+              <td className="py-2 pr-4">
+                <span
+                  className={
+                    row.level === "error"
+                      ? "text-[var(--danger)]"
+                      : row.level === "warn"
+                        ? "text-amber-600 dark:text-amber-400"
+                        : ""
+                  }
+                >
+                  {row.level}
+                </span>
+              </td>
+              <td className="py-2">
+                {row.message}
+                {row.meta ? (
+                  <pre className="mt-1 max-w-full overflow-x-auto text-xs text-[var(--muted)]">
+                    {JSON.stringify(row.meta, null, 2)}
+                  </pre>
+                ) : null}
+              </td>
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+function AdminActivityDigest({ logs }: { logs: LogRow[] }) {
+  const alerts = logs.filter(
+    (r) => r.level === "error" || r.level === "warn",
+  ).slice(0, 25);
+  const pipeline = logs.filter(logMatchesPipeline).slice(0, 30);
+
+  return (
+    <section className="mt-10 space-y-6">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
+        <h2 className="text-lg font-medium">Activity digest</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          Errors, warnings, and Slack → screenshots → Azure DevOps steps in one
+          place (no need to hunt in Vercel). Ukrainian: тут зведено попередження
+          та кроки пайплайну багів і медіа.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 dark:border-amber-400/25">
+        <h3 className="text-base font-semibold text-amber-900 dark:text-amber-100">
+          Errors &amp; warnings (latest 25)
+        </h3>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          If screenshots fail, check here first — then the pipeline rows below.
+        </p>
+        <div className="mt-3 max-h-72 overflow-auto text-sm">
+          <LogTable
+            rows={alerts}
+            emptyLabel="No errors or warnings in the loaded log window."
+          />
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[var(--accent)]/35 bg-[var(--surface)] p-6">
+        <h3 className="text-base font-semibold">
+          Slack → OpenAI → ADO / attachments (latest 30 matches)
+        </h3>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          Filtered from all levels: shortcuts, media prefetch,{" "}
+          <code className="text-[var(--accent)]">files.info</code>, downloads,
+          work item create, description patch, signing, etc.
+        </p>
+        <div className="mt-3 max-h-80 overflow-auto text-sm">
+          <LogTable
+            rows={pipeline}
+            emptyLabel="No pipeline-related log lines yet — create a bug from Slack to generate entries."
+          />
+        </div>
+      </div>
+    </section>
   );
 }
