@@ -166,6 +166,33 @@ async function postEphemeralHint(
   }
 }
 
+/**
+ * Visible to everyone on the message — works when ephemeral fails or user doesn’t notice it.
+ * Needs OAuth scope `reactions:write` (reinstall app after adding).
+ */
+async function addLadybugAckReaction(
+  slack: WebClient,
+  channelId: string,
+  messageTs: string,
+) {
+  try {
+    const r = await slack.reactions.add({
+      channel: channelId,
+      timestamp: messageTs,
+      name: "hourglass_flowing_sand",
+    });
+    if (r.ok) return;
+    if (r.error === "already_reacted") return;
+    await logEvent("warn", "ladybug: reactions.add (hourglass) failed — check bot in channel + reactions:write", {
+      channelId,
+      messageTs,
+      slackError: r.error,
+    });
+  } catch (e) {
+    await logError("ladybug: reactions.add threw", e, { channelId, messageTs });
+  }
+}
+
 /** First thread line so the channel sees activity before DB/OpenAI (Slack `thread_ts` = root of thread). */
 async function postLadybugThreadKickoff(
   slack: WebClient,
@@ -348,12 +375,22 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
     const botToken = process.env.SLACK_BOT_TOKEN?.trim();
     if (botToken) {
       const slackEarly = new WebClient(botToken);
+      await addLadybugAckReaction(
+        slackEarly,
+        ladybugCtx.channelId,
+        ladybugCtx.messageTs,
+      );
       await postEphemeralHint(
         slackEarly,
         ladybugCtx.channelId,
         ladybugCtx.userId,
         ":hourglass_flowing_sand: *Buggybot* — Got your :ladybug: reaction. Progress updates will appear in the *thread* on this message.",
       );
+    } else {
+      await logEvent("error", "ladybug: SLACK_BOT_TOKEN missing — cannot ack user", {
+        channelId: ladybugCtx.channelId,
+        messageTs: ladybugCtx.messageTs,
+      });
     }
 
     await logEvent("info", "ladybug reaction: scheduling bug pipeline", {
