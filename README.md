@@ -9,8 +9,6 @@ Next.js **App Router** + **TypeScript** app for **Vercel**: Slack **message shor
 ```text
 buggybot/
 ├── README.md
-├── docs/
-│   └── ADO_SAMPLE_PREVIEW.md  # `npm run preview:ado` — sample ADO-facing text/HTML
 ├── schema.sql                 # Standalone SQL (same tables as Drizzle)
 ├── .env.example
 ├── .gitignore
@@ -122,14 +120,6 @@ buggybot/
    ```
 
    [Vitest](https://vitest.dev/) runs **`src/**/*.test.ts`**: Slack [request signature](https://api.slack.com/authentication/verifying-requests-from-slack) (`verifySlackRequest`), shortcut payload normalization, **Slack file rows** that look like `application/octet-stream` + `filetype: binary` but are really PNG/JPEG (the common screenshot case), **`buildSlackMediaEmbedsHtml`** so Description gets `<img>` even when the stored MIME is wrong, **`bugIntakeSchema`** (environment/platform normalization), **assignment** modes, and **ADO attachment** env defaults. Slack downloads are tested with a **mock** `fetch` and a stub `WebClient` — you do not need tokens or network to catch regressions in the media pipeline.
-
-9. **Preview ADO-shaped output** (no Azure call — writes **`docs/ADO_SAMPLE_PREVIEW.md`**):
-
-   ```bash
-   npm run preview:ado
-   ```
-
-   Uses the same HTML builders as production; the doc is a Markdown-friendly reading of Description / Repro Steps / System Info / Acceptance Criteria for a fixed sample intake.
 
 ---
 
