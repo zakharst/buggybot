@@ -143,6 +143,50 @@ function dropEmptyAdoFieldValues(m: Record<string, unknown>) {
 }
 
 /**
+ * Boards/WIQL macros like `@CurrentIteration` are **not** resolved on Work Item Create REST API —
+ * they produce TF401347. Only a real tree path (or omit the field) works.
+ */
+function isWiqlCurrentIterationMacro(value: string): boolean {
+  return /@currentiteration/i.test(value.trim());
+}
+
+async function stripWiqlIterationMacrosFromMergedContext(
+  m: Record<string, unknown>,
+  org: string,
+  project: string,
+): Promise<void> {
+  const ip = m["System.IterationPath"];
+  if (typeof ip !== "string" || !isWiqlCurrentIterationMacro(ip)) return;
+  delete m["System.IterationPath"];
+  await logEvent(
+    "warn",
+    "ADO: removed System.IterationPath — @CurrentIteration* is for WIQL/Boards queries only, not REST work item create. Use /admin “iteration team” (Team Settings API → current sprint path) or a full path string.",
+    { org, project, hadValue: ip.slice(0, 200) },
+  );
+}
+
+async function stripWiqlIterationMacrosFromPatch(
+  patch: Array<Record<string, string | unknown>>,
+): Promise<void> {
+  for (let i = patch.length - 1; i >= 0; i--) {
+    const op = patch[i]!;
+    if (
+      op.op === "add" &&
+      op.path === "/fields/System.IterationPath" &&
+      typeof op.value === "string" &&
+      isWiqlCurrentIterationMacro(op.value)
+    ) {
+      await logEvent(
+        "warn",
+        "ADO: removed System.IterationPath from AZURE_DEVOPS_CREATE_EXTRA_PATCH — @CurrentIteration* invalid on REST create",
+        { valuePreview: op.value.slice(0, 160) },
+      );
+      patch.splice(i, 1);
+    }
+  }
+}
+
+/**
  * Optional JSON object in env: field ref → value. Set once in Vercel (no WIQL, no file read at create).
  * Empty strings are skipped — ADO picklists reject InvalidEmpty (TF401320).
  */
@@ -570,6 +614,12 @@ export async function createAzureBug(params: {
     delete mergedContext["System.IterationPath"];
   }
 
+  await stripWiqlIterationMacrosFromMergedContext(
+    mergedContext,
+    params.org,
+    params.project,
+  );
+
   const reportedFromRef = resolvedReportedFromFieldRef();
   const reportedFromValue =
     wd?.reportedFromLabel?.trim() ||
@@ -622,6 +672,8 @@ export async function createAzureBug(params: {
   }
 
   patch.push(...parseAzureDevOpsCreateExtraPatch(process.env.AZURE_DEVOPS_CREATE_EXTRA_PATCH));
+
+  await stripWiqlIterationMacrosFromPatch(patch);
 
   const res = await fetch(url, {
     method: "PATCH",
