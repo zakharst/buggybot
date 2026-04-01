@@ -13,6 +13,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:slack-ado": "node --env-file=.env ./node_modules/tsx/dist/cli.mjs --tsconfig tsconfig.json scripts/smoke-slack-ado-bug.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "ado:list-bug-fields": "node scripts/ado-list-required-bug-fields.mjs",
@@ -43,6 +44,7 @@
     "eslint-config-next": "^15.1.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^3.2.4"
   }
