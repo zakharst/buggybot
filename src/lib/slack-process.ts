@@ -31,7 +31,7 @@ function adoCreateFailureHint(err: unknown): string {
   const s = formatError(err);
   if (s.includes("TF401347") && /IterationPath/i.test(s)) {
     return (
-      "\n\nInvalid sprint/iteration path (TF401347). Do **not** use Boards macros like `@CurrentIteration` in REST — they only work in WIQL. Use /admin **iteration team name** (exact name under Project Settings → Teams), or a full path like `Project\\\\Release\\\\Sprint 2`. To let ADO use process defaults, set `AZURE_DEVOPS_DEFAULT_ITERATION=1` (or `AZURE_DEVOPS_OMIT_ITERATION_PATH=1`)."
+      "\n\nInvalid sprint/iteration path (TF401347). Do **not** use Boards macros like `@CurrentIteration` in REST — they only work in WIQL. By default **`System.IterationPath` is not sent**; configure /admin **iteration team name** (exact name under Project Settings → Teams) to set the current sprint, or use a valid full path only if your process requires it. To **force** omit iteration when a team name is set, use `AZURE_DEVOPS_DEFAULT_ITERATION=1` (or `AZURE_DEVOPS_OMIT_ITERATION_PATH=1`)."
     );
   }
   if (!s.includes("TF401320")) {
