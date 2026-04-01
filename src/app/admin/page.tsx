@@ -58,6 +58,7 @@ export default async function AdminPage() {
       slackMediaPerFileCapMb={slackMediaPerFileCapMegabytes()}
       slackInteractionsUrl={slackUrlFromEnv("/api/slack/interactions")}
       slackEventsUrl={slackUrlFromEnv("/api/slack/events")}
+      adminLogsExportUrl={slackUrlFromEnv("/api/admin/logs?limit=5000")}
       deploymentMeta={{
         gitSha: process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null,
         vercelEnv: process.env.VERCEL_ENV?.trim() || null,

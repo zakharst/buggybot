@@ -62,6 +62,8 @@ export function AdminPanel(props: {
   slackInteractionsUrl: string | null;
   /** Event Subscriptions Request URL (`reaction_added` / :ladybug:), or null. */
   slackEventsUrl: string | null;
+  /** `GET /api/admin/logs` — JSON export (Basic or `ADMIN_LOGS_BEARER`), or null. */
+  adminLogsExportUrl: string | null;
   /** Per-file MB cap (ADO Services = 60; on-prem can raise via env). */
   slackMediaPerFileCapMb: number;
   /** Vercel / CI — confirms which revision is running. */
@@ -82,6 +84,7 @@ export function AdminPanel(props: {
     envStatus,
     slackInteractionsUrl,
     slackEventsUrl,
+    adminLogsExportUrl,
     slackMediaPerFileCapMb,
     deploymentMeta,
     envOptionalHints,
@@ -539,6 +542,39 @@ export function AdminPanel(props: {
         <p className="mt-1 text-sm text-[var(--muted)]">
           Newest first, up to 500 rows from Postgres. Filter by level or search
           message/meta — no Vercel dashboard required.
+        </p>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          <strong className="font-medium text-[var(--text)]">Export all (or huge pages):</strong>{" "}
+          {adminLogsExportUrl ? (
+            <>
+              <code className="break-all text-[var(--accent)]">
+                {adminLogsExportUrl}
+              </code>
+              <span className="block pt-2">
+                Same login as this page:{" "}
+                <code className="text-[var(--accent)]">
+                  curl -u USER:PASS &quot;{adminLogsExportUrl}&quot;
+                </code>
+              </span>
+              <span className="block pt-1">
+                Optional env{" "}
+                <code className="text-[var(--accent)]">ADMIN_LOGS_BEARER</code>{" "}
+                → then{" "}
+                <code className="text-[var(--accent)]">
+                  curl -H &quot;Authorization: Bearer …&quot; &quot;{adminLogsExportUrl}
+                  &quot;
+                </code>{" "}
+                (pagination: <code className="text-[var(--accent)]">offset=</code>,{" "}
+                <code className="text-[var(--accent)]">limit=</code> up to 50k;{" "}
+                <code className="text-[var(--accent)]">format=ndjson</code>).
+              </span>
+            </>
+          ) : (
+            <>
+              Set <code className="text-[var(--accent)]">APP_BASE_URL</code> to show the
+              full export URL.
+            </>
+          )}
         </p>
         <div className="mt-4">
           <AdminLogExplorer logs={logs} />

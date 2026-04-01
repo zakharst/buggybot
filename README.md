@@ -304,7 +304,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 To sign out: close the session using the browser’s password manager / “sign out” for the site, or use a private window.
 
 - **Deployment** — the admin UI shows **`VERCEL_GIT_COMMIT_SHA`**, **`VERCEL_ENV`**, and **`VERCEL_URL`** on Vercel so you can confirm which revision is live after a push.
-- **Logs** — up to **500** rows from **`app_logs`** with **level filter** and **full-text search** over message + JSON meta (no Vercel dashboard required).
+- **Logs** — up to **500** rows in the UI from **`app_logs`** with **level filter** and **full-text search** over message + JSON meta (no Vercel dashboard required). **Bulk export:** **`GET /api/admin/logs`** — same **`ADMIN_BASIC_AUTH_*`** as `/admin`, or optional **`ADMIN_LOGS_BEARER`** with `Authorization: Bearer …`. Query: **`limit`** (default 5000, max 50000), **`offset`**, **`format=json|ndjson`**. Response headers **`X-Total-Count`**, **`X-Returned-Count`**.
 - **Postgres-backed settings** (edit in the form, no code change): ADO org/project overrides, **template work item ID** (copy `System.AreaPath`), **iteration team name** (current sprint via Team Settings API), **Reported from** picklist label, Slack→ADO media (**normal + “hard off”**), OpenAI model, QA pool, assignment, automation, confidence. Filling these overrides the optional env vars **`AZURE_DEVOPS_TEMPLATE_WORK_ITEM_ID`**, **`AZURE_DEVOPS_ITERATION_TEAM_NAME`**, and **`AZURE_DEVOPS_REPORTED_FROM`** when non-empty. Saving settings writes an **`Admin settings saved to Postgres`** line to **`app_logs`**.
 
 ---
