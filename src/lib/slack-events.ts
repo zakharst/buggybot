@@ -39,14 +39,15 @@ let warnedBogusLadybugEnv = false;
 export function getLadybugReactionNames(): string[] {
   const raw = process.env.SLACK_LADYBUG_REACTION_NAMES?.trim();
   if (!raw) {
-    return [LADYBUG_REACTION_NAME];
+    /** Some clients send Unicode 🐞 as `lady_beetle` in the Events API, not `ladybug`. */
+    return [LADYBUG_REACTION_NAME, "lady_beetle"];
   }
   const parts = raw
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
   if (parts.length === 0) {
-    return [LADYBUG_REACTION_NAME];
+    return [LADYBUG_REACTION_NAME, "lady_beetle"];
   }
   if (parts.length === 1 && BOGUS_LADYBUG_NAME_TOKENS.has(parts[0]!)) {
     if (!warnedBogusLadybugEnv) {
@@ -60,9 +61,25 @@ export function getLadybugReactionNames(): string[] {
   return parts;
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object";
+}
+
 function extractEventCallbackTeamId(body: Record<string, unknown>): string | null {
-  const tid = body.team_id;
-  if (typeof tid === "string" && tid.trim()) return tid.trim();
+  const tidTop = body.team_id;
+  if (typeof tidTop === "string" && tidTop.trim()) return tidTop.trim();
+
+  const ev = body.event;
+  if (isRecord(ev)) {
+    const tidEv = ev.team_id;
+    if (typeof tidEv === "string" && tidEv.trim()) return tidEv.trim();
+    const teamStr = ev.team;
+    if (typeof teamStr === "string" && teamStr.trim()) return teamStr.trim();
+    if (teamStr && typeof teamStr === "object" && teamStr !== null) {
+      const id = (teamStr as { id?: string }).id;
+      if (typeof id === "string" && id.trim()) return id.trim();
+    }
+  }
 
   const team = body.team;
   if (team && typeof team === "object" && team !== null) {
@@ -77,10 +94,6 @@ function extractEventCallbackTeamId(body: Record<string, unknown>): string | nul
   }
 
   return null;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === "object";
 }
 
 export type LadybugReactionContext = {
@@ -362,6 +375,42 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
   }
 
   const ladybugCtx = parseLadybugReactionContext(body);
+
+  if (
+    process.env.SLACK_LADYBUG_DIAG?.trim() === "1" &&
+    body.type === "event_callback" &&
+    isRecord(body.event) &&
+    body.event.type === "reaction_added"
+  ) {
+    const ev = body.event;
+    const item = isRecord(ev.item) ? ev.item : null;
+    const reactionRaw =
+      typeof ev.reaction === "string" ? ev.reaction.trim().toLowerCase() : null;
+    const allowed = getLadybugReactionNames();
+    const teamResolved = extractEventCallbackTeamId(body);
+    await logEvent("info", "[ladybug-diag] reaction_added (enable only while debugging)", {
+      parseMatchedLadybug: Boolean(ladybugCtx),
+      teamIdResolved: Boolean(teamResolved),
+      reaction: reactionRaw,
+      allowedNames: allowed,
+      reactionAllowed: Boolean(reactionRaw && allowed.includes(reactionRaw)),
+      itemType: item && typeof item.type === "string" ? item.type : null,
+      hasChannelTs:
+        Boolean(item && typeof item.channel === "string" && typeof item.ts === "string"),
+      hasUser: typeof ev.user === "string",
+      hint: ladybugCtx
+        ? "OK — pipeline should run."
+        : !teamResolved
+          ? "No team id on payload — check Enterprise / app manifest."
+          : !reactionRaw || !allowed.includes(reactionRaw)
+            ? "Set SLACK_LADYBUG_REACTION_NAMES to the API name Slack sends for your emoji."
+            : item?.type &&
+                String(item.type).trim().toLowerCase() !== "message"
+              ? "reaction_added item is not a message (e.g. file)."
+              : "Check channel/ts/user fields on event.item / event.user.",
+    });
+  }
+
   if (ladybugCtx) {
     const botUser = process.env.SLACK_BOT_USER_ID?.trim();
     if (botUser && ladybugCtx.userId === botUser) {

@@ -285,6 +285,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `SLACK_MEDIA_MAX_TOTAL_BYTES` | Optional. Approximate **sum** of all Slack image/video bytes held in RAM before ADO upload (default **~220 MiB**). Lower on small function memory; raise if you need many large files per message. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 | `SLACK_DEBUG_REACTIONS` | Set to `1` to log every **`reaction_added`** (`reaction` name, `item.type`, channel) so you can match **custom emoji** names to **`SLACK_LADYBUG_REACTION_NAMES`**. |
+| `SLACK_LADYBUG_DIAG` | Set to `1` for **`[ladybug-diag]`** lines: why each **`reaction_added`** did or didn’t match (team id, reaction name vs defaults `ladybug` + `lady_beetle`). Turn off after debugging. |
 | `SLACK_LADYBUG_REACTION_NAMES` | Optional. Comma-separated Events API **`reaction`** values that trigger the bug pipeline (default **`ladybug`**). Use when your workspace uses a custom ladybug-style emoji with another API name. |
 | `SLACK_BOT_USER_ID` | Optional. If set, **:ladybug:** reactions from this user id are ignored (e.g. bot’s own `U…` from `auth.test`). |
 

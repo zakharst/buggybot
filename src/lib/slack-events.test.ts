@@ -95,6 +95,46 @@ describe("parseLadybugReactionContext", () => {
     });
   });
 
+  it("reads team id from event.team_id when outer team_id absent", () => {
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        event: {
+          type: "reaction_added",
+          team_id: "TEVONLY",
+          user: "U1",
+          reaction: "ladybug",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).toEqual({
+      teamId: "TEVONLY",
+      channelId: "C1",
+      messageTs: "1.0",
+      userId: "U1",
+    });
+  });
+
+  it("accepts lady_beetle as default trigger (Unicode-style name)", () => {
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "reaction_added",
+          user: "U1",
+          reaction: "lady_beetle",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).toEqual({
+      teamId: "T1",
+      channelId: "C1",
+      messageTs: "1.0",
+      userId: "U1",
+    });
+  });
+
   it("reads team id from authorizations[0].team_id (Enterprise Grid style)", () => {
     expect(
       parseLadybugReactionContext({
