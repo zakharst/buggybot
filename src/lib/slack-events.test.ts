@@ -181,6 +181,23 @@ describe("parseLadybugReactionContext", () => {
     expect(getLadybugReactionNames()).toEqual([LADYBUG_REACTION_NAME]);
   });
 
+  it("normalizes :ladybug: to ladybug for SLACK_LADYBUG_REACTION_NAMES", () => {
+    vi.stubEnv("SLACK_LADYBUG_REACTION_NAMES", ":ladybug:");
+    expect(getLadybugReactionNames()).toEqual(["ladybug"]);
+    expect(
+      parseLadybugReactionContext({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "reaction_added",
+          user: "U1",
+          reaction: "ladybug",
+          item: { type: "message", channel: "C1", ts: "1.0" },
+        },
+      }),
+    ).not.toBeNull();
+  });
+
   it("matches reaction case-insensitively", () => {
     expect(
       parseLadybugReactionContext({

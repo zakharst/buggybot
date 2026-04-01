@@ -30,11 +30,21 @@ const BOGUS_LADYBUG_NAME_TOKENS = new Set([
 let warnedBogusLadybugEnv = false;
 
 /**
+ * Slack Events API `reaction` is `ladybug` (no colons). Users often paste `:ladybug:` from UI.
+ */
+function normalizeLadybugReactionNameToken(s: string): string {
+  let t = s.trim().toLowerCase();
+  while (t.startsWith(":")) t = t.slice(1);
+  while (t.endsWith(":")) t = t.slice(0, -1);
+  return t.trim();
+}
+
+/**
  * Allowed `reaction` values for triggering the bug pipeline. Default `ladybug`; override if your
  * workspace uses a custom emoji name (check payload with `SLACK_DEBUG_REACTIONS=1`).
  *
  * **Not** the same as `SLACK_DEBUG_REACTIONS=1` — that variable is on/off; this one must be
- * comma-separated **emoji short names** (e.g. `ladybug`), not `1`.
+ * comma-separated **emoji short names** (e.g. `ladybug` or `:ladybug:`), not `1`.
  */
 export function getLadybugReactionNames(): string[] {
   const raw = process.env.SLACK_LADYBUG_REACTION_NAMES?.trim();
@@ -44,7 +54,7 @@ export function getLadybugReactionNames(): string[] {
   }
   const parts = raw
     .split(",")
-    .map((s) => s.trim().toLowerCase())
+    .map((s) => normalizeLadybugReactionNameToken(s))
     .filter(Boolean);
   if (parts.length === 0) {
     return [LADYBUG_REACTION_NAME, "lady_beetle"];
