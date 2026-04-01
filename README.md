@@ -53,6 +53,7 @@ buggybot/
 │       ├── settings-types.ts
 │       ├── settings.ts
 │       ├── slack-ado-media-limits.ts  # ADO attachment caps + RAM budget (Slack→ADO)
+│       ├── slack-file-media-utils.ts # infer image/video when Slack sends octet-stream/binary
 │       ├── slack-message-media.ts  # Slack images/videos → ADO attachments
 │       ├── slack-payload.ts
 │       ├── slack-process.ts   # Main shortcut pipeline
@@ -164,6 +165,14 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 7. **Reinstall** the app if Slack prompts after scope changes.
 
 8. In Slack, **invite the bot** to channels where the shortcut will be used: `/invite @YourBotName`.
+
+**If images/videos don’t appear in ADO:**
+
+- **/admin** → **Slack → ADO attachments** must be on; env **`AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS=1`** forces them off.
+- Bot must be **in the channel** (`/invite @YourBot`). Without **`channels:history`** / **`groups:history`** (and the bot in that channel), Slack returns no message → no `files`.
+- After adding **`files:read`**, **reinstall** the app and confirm the token starts with `xoxb-`.
+- Only **file uploads** on that message are synced (Slack’s `files` on the message). Some clients show images only inside Block Kit without a hosted `files` entry — there is nothing to download.
+- Check **/admin** logs for **`Slack conversations.history failed`**, **`no download URL`**, **`slack media skipped for ADO`**, or **`ADO media attachment step error`**.
 
 ---
 

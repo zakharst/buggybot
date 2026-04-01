@@ -5,6 +5,7 @@ import {
   resolvedSystemInfoFieldRef,
 } from "@/lib/ado-bug-resolved-refs";
 import { adoMaxAttachmentBytesPerFile } from "@/lib/slack-ado-media-limits";
+import { inferContentTypeFromFileNameForEmbed } from "@/lib/slack-file-media-utils";
 
 function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
@@ -576,8 +577,19 @@ export function buildSlackMediaEmbedsHtml(
 ): string {
   if (!linked.length) return "";
   const lower = (ct: string) => ct.toLowerCase();
-  const imgs = linked.filter((x) => lower(x.contentType).startsWith("image/"));
-  const vids = linked.filter((x) => lower(x.contentType).startsWith("video/"));
+  const effectiveType = (x: { fileName: string; contentType: string }) => {
+    const c = lower(x.contentType);
+    if (c.startsWith("image/") || c.startsWith("video/")) {
+      return x.contentType;
+    }
+    return inferContentTypeFromFileNameForEmbed(x.fileName);
+  };
+  const imgs = linked.filter((x) =>
+    lower(effectiveType(x)).startsWith("image/"),
+  );
+  const vids = linked.filter((x) =>
+    lower(effectiveType(x)).startsWith("video/"),
+  );
   if (!imgs.length && !vids.length) return "";
 
   const parts = [

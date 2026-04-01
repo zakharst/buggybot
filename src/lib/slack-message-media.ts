@@ -7,36 +7,11 @@ import {
   adoMaxAttachmentBytesPerFile,
   slackMediaPrefetchTotalBudgetBytes,
 } from "@/lib/slack-ado-media-limits";
-
-function isImageOrVideoSlackFile(f: FileElement): boolean {
-  if (f.is_external) return false;
-  const mime = (f.mimetype || "").toLowerCase();
-  if (mime.startsWith("image/")) return true;
-  if (mime.startsWith("video/")) return true;
-  const ft = (f.filetype || "").toLowerCase();
-  const images = new Set([
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "webp",
-    "heic",
-    "bmp",
-    "tif",
-    "tiff",
-  ]);
-  const videos = new Set([
-    "mp4",
-    "mov",
-    "webm",
-    "avi",
-    "mkv",
-    "mpeg",
-    "mpg",
-    "m4v",
-  ]);
-  return images.has(ft) || videos.has(ft);
-}
+import {
+  inferSlackFileContentType,
+  slackHostedFileLooksLikeImageOrVideo,
+} from "@/lib/slack-file-media-utils";
+import { logEvent } from "@/lib/logger";
 
 /** Prefer download URL (works with bot token + files:read). */
 function slackFileDownloadUrl(f: FileElement): string | undefined {
@@ -62,7 +37,16 @@ export async function fetchImageAndVideoFilesForSlackMessage(
       ts: threadTs,
       limit: 200,
     });
-    if (!res.ok || !res.messages?.length) return [];
+    if (!res.ok) {
+      void logEvent("warn", "Slack conversations.replies failed (media fetch)", {
+        channelId,
+        messageTs,
+        threadTs,
+        error: res.error ?? "unknown",
+      });
+      return [];
+    }
+    if (!res.messages?.length) return [];
     msg = res.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
   } else {
     const h = await slack.conversations.history({
@@ -72,6 +56,13 @@ export async function fetchImageAndVideoFilesForSlackMessage(
       inclusive: true,
       limit: 1,
     });
+    if (!h.ok) {
+      void logEvent("warn", "Slack conversations.history failed (media fetch)", {
+        channelId,
+        messageTs,
+        error: h.error ?? "unknown",
+      });
+    }
     if (h.ok && h.messages?.[0]?.ts === messageTs) {
       msg = h.messages[0] as MessageElement;
     }
@@ -81,15 +72,49 @@ export async function fetchImageAndVideoFilesForSlackMessage(
         ts: messageTs,
         limit: 200,
       });
+      if (!r.ok) {
+        void logEvent("warn", "Slack conversations.replies fallback failed (media fetch)", {
+          channelId,
+          messageTs,
+          error: r.error ?? "unknown",
+        });
+      }
       if (r.ok && r.messages?.length) {
         msg = r.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
       }
     }
   }
 
-  const files = msg?.files;
-  if (!Array.isArray(files) || !files.length) return [];
-  return files.filter((f) => isImageOrVideoSlackFile(f));
+  if (!msg) {
+    void logEvent("warn", "Slack media: no message row for ts (cannot read files)", {
+      channelId,
+      messageTs,
+      threadTs,
+    });
+    return [];
+  }
+
+  const files = msg.files;
+  if (!Array.isArray(files) || !files.length) {
+    return [];
+  }
+  const media = files.filter((f) =>
+    slackHostedFileLooksLikeImageOrVideo(f as FileElement),
+  );
+  if (files.length > 0 && media.length === 0) {
+    void logEvent("warn", "Slack media: message has files but none treated as image/video", {
+      channelId,
+      messageTs,
+      count: files.length,
+      sample: files.slice(0, 4).map((f) => ({
+        mimetype: f.mimetype,
+        filetype: f.filetype,
+        name: (f.name || f.title || "").slice(0, 80),
+        is_external: f.is_external,
+      })),
+    });
+  }
+  return media as FileElement[];
 }
 
 export type SlackMediaDownload = {
@@ -174,7 +199,7 @@ export async function collectSlackMessageMediaDownloads(params: {
       skipped.push(`max ${maxFiles} media file(s) per bug`);
       break;
     }
-    const id = typeof f.id === "string" ? f.id : "";
+    const id = f.id != null ? String(f.id) : "";
     if (id && seen.has(id)) continue;
     if (id) seen.add(id);
 
@@ -208,8 +233,7 @@ export async function collectSlackMessageMediaDownloads(params: {
         thisFileCap,
       );
       const fileName = pickSlackFileName(f);
-      const contentType =
-        (f.mimetype && f.mimetype.trim()) || "application/octet-stream";
+      const contentType = inferSlackFileContentType(f as FileElement);
       runningTotal += bytes.byteLength;
       downloads.push({
         fileName,
