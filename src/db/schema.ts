@@ -1,11 +1,4 @@
-import {
-  jsonb,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  uniqueIndex,
-} from "drizzle-orm/pg-core";
+import { jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 
 export const appSettings = pgTable("app_settings", {
   id: serial("id").primaryKey(),
@@ -16,27 +9,18 @@ export const appSettings = pgTable("app_settings", {
     .defaultNow(),
 });
 
-export const slackMessageBugs = pgTable(
-  "slack_message_bugs",
-  {
-    id: serial("id").primaryKey(),
-    teamId: text("team_id").notNull(),
-    channelId: text("channel_id").notNull(),
-    messageTs: text("message_ts").notNull(),
-    workItemId: text("work_item_id"),
-    assignee: text("assignee"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => ({
-    uniqMessage: uniqueIndex("slack_message_bugs_uniq").on(
-      t.teamId,
-      t.channelId,
-      t.messageTs,
-    ),
-  }),
-);
+/** One row per bug run from a Slack message (same message may create multiple ADO bugs). */
+export const slackMessageBugs = pgTable("slack_message_bugs", {
+  id: serial("id").primaryKey(),
+  teamId: text("team_id").notNull(),
+  channelId: text("channel_id").notNull(),
+  messageTs: text("message_ts").notNull(),
+  workItemId: text("work_item_id"),
+  assignee: text("assignee"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const appLogs = pgTable("app_logs", {
   id: serial("id").primaryKey(),

@@ -1,6 +1,6 @@
 # Buggybot
 
-Next.js **App Router** + **TypeScript** app for **Vercel**: Slack **message shortcuts** over **HTTP Interactivity** (no Socket Mode), optional **Event Subscriptions** so a **:ladybug:** reaction runs the same bug pipeline, **Azure DevOps REST** only, **OpenAI** for structured bug JSON, and **Postgres** via **[Neon through the Vercel Marketplace](https://vercel.com/marketplace/neon)** (recommended) for settings, idempotency, and logs. The app reads **`DATABASE_URL` only**—the standard pooled `postgresql://…` string Vercel injects after you connect Neon. **No Redis, queues, Docker, or self-hosted database.**
+Next.js **App Router** + **TypeScript** app for **Vercel**: Slack **message shortcuts** over **HTTP Interactivity** (no Socket Mode), optional **Event Subscriptions** so a **:ladybug:** reaction runs the same bug pipeline, **Azure DevOps REST** only, **OpenAI** for structured bug JSON, and **Postgres** via **[Neon through the Vercel Marketplace](https://vercel.com/marketplace/neon)** (recommended) for settings, run tracking, and logs. The app reads **`DATABASE_URL` only**—the standard pooled `postgresql://…` string Vercel injects after you connect Neon. **No Redis, queues, Docker, or self-hosted database.**
 
 ---
 
@@ -132,7 +132,7 @@ Canonical file: **`schema.sql`** (root). Tables:
 | Table | Purpose |
 |-------|---------|
 | `app_settings` | Key/value JSON for app preferences (e.g. `main` settings row) |
-| `slack_message_bugs` | Idempotency: unique `(team_id, channel_id, message_ts)` |
+| `slack_message_bugs` | One row per bug run from Slack (same message can have many rows / many bugs) |
 | `app_logs` | Recent operational logs (`info` / `warn` / `error`) |
 
 Drizzle mirrors this in `src/db/schema.ts` for the app runtime.
@@ -322,7 +322,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 ## 9. Behavior summary
 
-- Message shortcut **`create_azure_bug`** or **:ladybug:** on a message (Events API) → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug (**`Environment: dev|prod`** and **`Platform: iOS|Android`** from the message; **`Production`** tag when environment is **prod**), **`Build:`** from env, Slack media **downloaded from Slack, attached, and embedded**, assignment per **/admin**. **Shortcut:** status **modal** + final thread line. **:ladybug:** reaction: **no modal** — **thread post** with step-by-step progress (updated in place), then the same success line. Reactions use the **reacting user** as the shortcut “user” (e.g. reporter assignment).
+- Message shortcut **`create_azure_bug`** or **:ladybug:** on a message (Events API) → verify Slack signature → **200 OK** immediately → background: DB row per run, OpenAI structured bug (**`Environment: dev|prod`** and **`Platform: iOS|Android`** from the message; **`Production`** tag when environment is **prod**), **`Build:`** from env, Slack media **downloaded from Slack, attached, and embedded**, assignment per **/admin**. **Shortcut:** status **modal** + final thread line. **:ladybug:** reaction: **no modal** — **thread post** with step-by-step progress (updated in place), then the same success line. Reactions use the **reacting user** as the shortcut “user” (e.g. reporter assignment).
 
 ## License
 

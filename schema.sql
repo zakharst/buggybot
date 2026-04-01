@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS slack_message_bugs (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS slack_message_bugs_uniq
-  ON slack_message_bugs (team_id, channel_id, message_ts);
+-- Same Slack message may create multiple ADO bugs. Drop legacy uniqueness if upgrading:
+DROP INDEX IF EXISTS slack_message_bugs_uniq;
 
 CREATE TABLE IF NOT EXISTS app_logs (
   id         serial PRIMARY KEY,
