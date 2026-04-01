@@ -137,6 +137,8 @@ Canonical file: **`schema.sql`** (root). Tables:
 
 Drizzle mirrors this in `src/db/schema.ts` for the app runtime.
 
+**Upgrading from older deploys:** if Postgres still has the legacy unique index `slack_message_bugs_uniq`, run once in Neon (SQL Editor): `DROP INDEX IF EXISTS slack_message_bugs_uniq;` — otherwise the second bug on the same message can error. `drizzle-kit push` on Vercel usually drops it automatically when the schema changes.
+
 **Runtime:** `src/db/index.ts` uses **`postgres.js`** with **`process.env.DATABASE_URL` only** (trimmed). Options **`prepare: false`** and **`max: 1`** match Neon’s **pooled** URLs and serverless functions. No other database env vars are read.
 
 ---
