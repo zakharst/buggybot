@@ -4,6 +4,7 @@ import {
   resolvedReproStepsFieldRef,
   resolvedSystemInfoFieldRef,
 } from "@/lib/ado-bug-resolved-refs";
+import { logEvent } from "@/lib/logger";
 import { adoMaxAttachmentBytesPerFile } from "@/lib/slack-ado-media-limits";
 import { inferContentTypeFromFileNameForEmbed } from "@/lib/slack-file-media-utils";
 
@@ -551,7 +552,22 @@ export async function createAzureBug(params: {
     });
     if (iterationPath) {
       mergedContext["System.IterationPath"] = iterationPath;
+    } else {
+      /**
+       * `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` often pins an old sprint; if Team Settings API
+       * returns no current iteration, keeping that stale path causes TF401347.
+       */
+      delete mergedContext["System.IterationPath"];
+      await logEvent(
+        "warn",
+        "ADO: iteration team configured but no current sprint from API; removed System.IterationPath (was possibly stale from REQUIRED_FIELD_VALUES)",
+        { iterationTeam, org: params.org, project: params.project },
+      );
     }
+  }
+
+  if (process.env.AZURE_DEVOPS_OMIT_ITERATION_PATH?.trim() === "1") {
+    delete mergedContext["System.IterationPath"];
   }
 
   const reportedFromRef = resolvedReportedFromFieldRef();

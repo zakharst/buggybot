@@ -29,6 +29,11 @@ import { formatError } from "@/lib/errors";
 
 function adoCreateFailureHint(err: unknown): string {
   const s = formatError(err);
+  if (s.includes("TF401347") && /IterationPath/i.test(s)) {
+    return (
+      "\n\nInvalid sprint/iteration path (TF401347). Fix or remove `System.IterationPath` in `AZURE_DEVOPS_REQUIRED_FIELD_VALUES`; set exact **Boards team** in /admin or `AZURE_DEVOPS_ITERATION_TEAM_NAME` (Project Settings → Teams). Or set `AZURE_DEVOPS_OMIT_ITERATION_PATH=1` to skip iteration on create."
+    );
+  }
   if (!s.includes("TF401320")) {
     return "";
   }
