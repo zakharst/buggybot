@@ -143,7 +143,9 @@ export async function POST(req: Request) {
       }
 
       waitUntil(
-        processCreateAzureBugShortcut(normalized, modalSync).catch((e) =>
+        processCreateAzureBugShortcut(normalized, modalSync, {
+          triggerSource: "shortcut",
+        }).catch((e) =>
           logError("waitUntil shortcut task rejected", e, {
             pathname,
             slackPayloadType: summary.payloadType,

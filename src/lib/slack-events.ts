@@ -134,7 +134,9 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
   }
 
   const payload = buildShortcutPayloadFromLadybugReaction(ctx, message);
-  await processCreateAzureBugShortcut(payload, null);
+  await processCreateAzureBugShortcut(payload, null, {
+    triggerSource: "ladybug_reaction",
+  });
 }
 
 export async function handleSlackEventsPost(req: Request): Promise<Response> {

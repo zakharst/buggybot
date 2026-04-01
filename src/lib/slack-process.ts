@@ -197,12 +197,18 @@ async function showSuccess(
   );
 }
 
+/** How the bug pipeline was started (Vercel logs: same `slackPayloadType` for reaction — we synthesize `message_action`). */
+export type BugShortcutTriggerSource = "shortcut" | "ladybug_reaction";
+
 export async function processCreateAzureBugShortcut(
   payload: SlackBugShortcutPayload,
   modalSync: ModalSync | null,
+  opts?: { triggerSource?: BugShortcutTriggerSource },
 ) {
+  const triggerSource = opts?.triggerSource ?? "shortcut";
   slackInteractionDiag({
     step: "pipeline_entered",
+    triggerSource,
     slackPayloadType: payload.type,
     channelIdSet: Boolean(payload.channel?.id),
     hasMessageTs: Boolean(payload.message?.ts),
