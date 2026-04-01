@@ -9,7 +9,9 @@ import {
 } from "@/lib/slack-ado-media-limits";
 import {
   inferSlackFileContentType,
+  sniffMediaMimeFromBytes,
   slackHostedFileLooksLikeImageOrVideo,
+  slackUploadLooksLikeUndifferentiatedBinary,
 } from "@/lib/slack-file-media-utils";
 import { formatError } from "@/lib/errors";
 import { logEvent } from "@/lib/logger";
@@ -58,6 +60,50 @@ function mergeInteractionAndApiFileElements(
     }
   }
   return [...map.values()];
+}
+
+function isSlackHostedMediaCandidate(f: FileElement): boolean {
+  if (f.is_external) return false;
+  return (
+    slackHostedFileLooksLikeImageOrVideo(f as FileElement) ||
+    slackUploadLooksLikeUndifferentiatedBinary(f as FileElement)
+  );
+}
+
+/**
+ * Walks channel history pages (newest first) until `messageTs` is found.
+ * Helps when Slack omits a thread reply from tight `latest`/`oldest` windows.
+ */
+export async function paginatedChannelHistoryFindMessage(
+  slack: WebClient,
+  channelId: string,
+  messageTs: string,
+  maxPages: number,
+): Promise<MessageElement | undefined> {
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const r = await slack.conversations.history({
+      channel: channelId,
+      limit: 200,
+      cursor,
+      include_all_metadata: true,
+    });
+    if (!r.ok) {
+      if (page === 0) {
+        void logEvent("warn", "Slack paginated history failed (media message hunt)", {
+          channelId,
+          messageTs,
+          error: r.error ?? "unknown",
+        });
+      }
+      break;
+    }
+    const hit = r.messages?.find((m) => m.ts === messageTs);
+    if (hit) return hit as MessageElement;
+    cursor = r.response_metadata?.next_cursor;
+    if (!cursor) break;
+  }
+  return undefined;
 }
 
 async function enrichFileElementsWithFilesInfo(
@@ -125,10 +171,32 @@ export async function fetchImageAndVideoFilesForSlackMessage(
         threadTs,
         error: res.error ?? "unknown",
       });
-      return [];
+      msg = await paginatedChannelHistoryFindMessage(
+        slack,
+        channelId,
+        messageTs,
+        8,
+      );
+      if (!msg) return [];
+    } else if (!res.messages?.length) {
+      msg = await paginatedChannelHistoryFindMessage(
+        slack,
+        channelId,
+        messageTs,
+        8,
+      );
+      if (!msg) return [];
+    } else {
+      msg = res.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
+      if (!msg) {
+        msg = await paginatedChannelHistoryFindMessage(
+          slack,
+          channelId,
+          messageTs,
+          8,
+        );
+      }
     }
-    if (!res.messages?.length) return [];
-    msg = res.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
   } else {
     const h = await slack.conversations.history({
       channel: channelId,
@@ -166,6 +234,14 @@ export async function fetchImageAndVideoFilesForSlackMessage(
         msg = r.messages.find((m) => m.ts === messageTs) as MessageElement | undefined;
       }
     }
+    if (!msg) {
+      msg = await paginatedChannelHistoryFindMessage(
+        slack,
+        channelId,
+        messageTs,
+        8,
+      );
+    }
   }
 
   if (!msg) {
@@ -176,13 +252,16 @@ export async function fetchImageAndVideoFilesForSlackMessage(
     });
     let only = fileElementsFromInteractionPayload(
       interactionMessageFiles,
-    ).filter((f) => slackHostedFileLooksLikeImageOrVideo(f as FileElement));
+    ).filter((f) => isSlackHostedMediaCandidate(f as FileElement));
     if (!only.length) {
       return [];
     }
     only = await enrichFileElementsWithFilesInfo(slack, only);
-    return only.filter((f) =>
-      slackHostedFileLooksLikeImageOrVideo(f as FileElement),
+    return only.filter(
+      (f) =>
+        slackHostedFileLooksLikeImageOrVideo(f as FileElement) ||
+        (slackUploadLooksLikeUndifferentiatedBinary(f as FileElement) &&
+          Boolean(slackFileDownloadUrl(f))),
     );
   }
 
@@ -195,15 +274,20 @@ export async function fetchImageAndVideoFilesForSlackMessage(
     fromApiRaw,
   );
 
-  let media = merged.filter((f) =>
-    slackHostedFileLooksLikeImageOrVideo(f as FileElement),
-  );
+  let media = merged.filter((f) => isSlackHostedMediaCandidate(f as FileElement));
 
-  const needsInfo = media.some((f) => !slackFileDownloadUrl(f));
+  const needsInfo =
+    media.some((f) => !slackFileDownloadUrl(f)) ||
+    media.some((f) =>
+      slackUploadLooksLikeUndifferentiatedBinary(f as FileElement),
+    );
   if (needsInfo) {
     media = await enrichFileElementsWithFilesInfo(slack, media);
-    media = media.filter((f) =>
-      slackHostedFileLooksLikeImageOrVideo(f as FileElement),
+    media = media.filter(
+      (f) =>
+        slackHostedFileLooksLikeImageOrVideo(f as FileElement) ||
+        (slackUploadLooksLikeUndifferentiatedBinary(f as FileElement) &&
+          Boolean(slackFileDownloadUrl(f))),
     );
   }
 
@@ -366,7 +450,15 @@ export async function collectSlackMessageMediaDownloads(params: {
         thisFileCap,
       );
       const fileName = pickSlackFileName(f);
-      const contentType = inferSlackFileContentType(f as FileElement);
+      let contentType = inferSlackFileContentType(f as FileElement);
+      const lowerCt = contentType.toLowerCase();
+      if (
+        lowerCt === "application/octet-stream" ||
+        (!lowerCt.startsWith("image/") && !lowerCt.startsWith("video/"))
+      ) {
+        const sniffed = sniffMediaMimeFromBytes(bytes);
+        if (sniffed) contentType = sniffed;
+      }
       runningTotal += bytes.byteLength;
       downloads.push({
         fileName,

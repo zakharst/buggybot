@@ -82,6 +82,63 @@ export function slackHostedFileLooksLikeImageOrVideo(f: SlackFileShape): boolean
 }
 
 /**
+ * Generic Slack upload typing (no extension in name yet). Must go through
+ * `files.info` before we can classify; otherwise screenshots are dropped.
+ */
+export function slackUploadLooksLikeUndifferentiatedBinary(
+  f: SlackFileShape,
+): boolean {
+  if (f.is_external) return false;
+  if (slackHostedFileLooksLikeImageOrVideo(f)) return false;
+  const mime = (f.mimetype || "").toLowerCase().trim();
+  const ft = (f.filetype || "").toLowerCase();
+  if (ft === "binary") return true;
+  if (mime === "application/octet-stream") return true;
+  return false;
+}
+
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+function startsWithSig(buf: Uint8Array, sig: number[]): boolean {
+  if (buf.byteLength < sig.length) return false;
+  for (let i = 0; i < sig.length; i++) {
+    if (buf[i] !== sig[i]) return false;
+  }
+  return true;
+}
+
+/** When Slack/ADO still have octet-stream, infer image/video from magic bytes. */
+export function sniffMediaMimeFromBytes(buf: Uint8Array): string | null {
+  if (buf.byteLength < 12) return null;
+  if (startsWithSig(buf, PNG_SIG)) return "image/png";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  const head = new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(0, 12));
+  if (head.startsWith("GIF87a") || head.startsWith("GIF89a")) return "image/gif";
+  if (
+    head.startsWith("RIFF") &&
+    new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(8, 12)) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (
+    buf.byteLength >= 12 &&
+    buf[4] === 0x66 &&
+    buf[5] === 0x74 &&
+    buf[6] === 0x79 &&
+    buf[7] === 0x70
+  ) {
+    const brand = new TextDecoder("utf-8", { fatal: false }).decode(buf.slice(8, 12));
+    const b = brand.toLowerCase();
+    if (/^avif|^avis/i.test(b)) return "image/avif";
+    if (/^heic|^heix|^hevc|^heim|^heis|^hevm|^hevs|^mif1|^msf1/i.test(b)) {
+      return "image/heic";
+    }
+    if (/^qt/i.test(b)) return "video/quicktime";
+    if (/^mp4|^isom|^M4V|^dash/i.test(b)) return "video/mp4";
+  }
+  return null;
+}
+
+/**
  * Stable Content-Type for ADO embed logic (Slack mimetype often wrong).
  */
 export function inferSlackFileContentType(f: SlackFileShape): string {

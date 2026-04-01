@@ -48,6 +48,55 @@ describe("fetchImageAndVideoFilesForSlackMessage", () => {
     expect(files[0]!.name).toBe("shot.png");
   });
 
+  it("keeps binary uploads without extension via files.info", async () => {
+    const slack = {
+      conversations: {
+        history: vi.fn().mockResolvedValue({
+          ok: true,
+          messages: [
+            {
+              ts: "2.0",
+              files: [
+                {
+                  id: "Fnoid",
+                  mimetype: "application/octet-stream",
+                  filetype: "binary",
+                  size: 4,
+                  is_external: false,
+                },
+              ],
+            },
+          ],
+        }),
+        replies: vi.fn().mockResolvedValue({ ok: true, messages: [] }),
+      },
+      files: {
+        info: vi.fn().mockResolvedValue({
+          ok: true,
+          file: {
+            id: "Fnoid",
+            name: "photo.jpg",
+            mimetype: "image/jpeg",
+            filetype: "jpg",
+            size: 4,
+            url_private_download: "https://files.slack.com/x",
+            is_external: false,
+          },
+        }),
+      },
+    } as unknown as WebClient;
+
+    const files = await fetchImageAndVideoFilesForSlackMessage(
+      slack,
+      "C1",
+      "2.0",
+      "2.0",
+    );
+    expect(slack.files.info).toHaveBeenCalledWith({ file: "Fnoid" });
+    expect(files).toHaveLength(1);
+    expect(files[0]!.mimetype).toBe("image/jpeg");
+  });
+
   it("uses conversations.replies for thread replies", async () => {
     const slack = {
       conversations: {
@@ -186,5 +235,56 @@ describe("collectSlackMessageMediaDownloads", () => {
     expect(downloads).toHaveLength(1);
     expect(downloads[0]!.contentType).toBe("image/png");
     expect(downloads[0]!.bytes.byteLength).toBe(4);
+  });
+
+  it("sniffs PNG from bytes when Slack metadata stays octet-stream", async () => {
+    const pngBody = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0,
+    ]);
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(pngBody, {
+        status: 200,
+        headers: { "content-length": String(pngBody.byteLength) },
+      }),
+    ) as unknown as typeof fetch;
+
+    const slack = {
+      conversations: {
+        history: vi.fn().mockResolvedValue({
+          ok: true,
+          messages: [
+            {
+              ts: "9.0",
+              files: [
+                {
+                  id: "Fraw",
+                  name: "blob",
+                  mimetype: "application/octet-stream",
+                  filetype: "binary",
+                  size: pngBody.byteLength,
+                  url_private_download: "https://files.slack.com/raw",
+                  is_external: false,
+                },
+              ],
+            },
+          ],
+        }),
+        replies: vi.fn(),
+      },
+    } as unknown as WebClient;
+
+    const { downloads, skipped } = await collectSlackMessageMediaDownloads({
+      slack,
+      botToken: "xoxb-fake",
+      channelId: "C",
+      messageTs: "9.0",
+      threadTs: "9.0",
+      maxBytesPerFile: 10 * 1024 * 1024,
+      maxFiles: 5,
+    });
+
+    expect(skipped).toEqual([]);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]!.contentType).toBe("image/png");
   });
 });

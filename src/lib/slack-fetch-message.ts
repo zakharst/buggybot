@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import type { MessageElement } from "@slack/web-api/dist/types/response/ConversationsHistoryResponse";
 import { logEvent } from "@/lib/logger";
+import { paginatedChannelHistoryFindMessage } from "@/lib/slack-message-media";
 import type { SlackBugShortcutPayload } from "@/lib/slack-payload";
 
 export type BugShortcutMessage = NonNullable<
@@ -91,6 +92,16 @@ export async function fetchSlackMessageForBugShortcut(
         error: asThreadRoot.error ?? "unknown",
       },
     );
+  }
+
+  const paged = await paginatedChannelHistoryFindMessage(
+    slack,
+    channelId,
+    messageTs,
+    8,
+  );
+  if (paged) {
+    return messageElementToBugShortcutMessage(paged);
   }
 
   await logEvent("warn", "Could not load Slack message for reaction trigger", {
