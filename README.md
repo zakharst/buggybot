@@ -314,7 +314,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 - **`logEvent(level, message, meta?)`** — writes to `app_logs` (failures fall back to `console.error`).
 - **`logError(message, err, meta?)`** — formats `err` with **`formatError`**, logs to DB + **stderr**.
 - **`POST /api/slack/interactions`** (and legacy **`POST /api/slack`**) — verifies signature; logs warnings/errors; schedules the shortcut pipeline with **`waitUntil()`** after a fast 200 ack; wraps unhandled failures with **`logError`** and returns **500** without leaking details in the body.
-- **`POST /api/slack/events`** — Event Subscriptions JSON; **`url_verification`** challenge; **`reaction_added`** whose **`reaction`** is in **`SLACK_LADYBUG_REACTION_NAMES`** (default **`ladybug`**) schedules the same pipeline (no modal). Signature verification matches Interactivity.
+- **`POST /api/slack/events`** — Event Subscriptions JSON; **`url_verification`** challenge; **`reaction_added`** whose **`reaction`** is in **`SLACK_LADYBUG_REACTION_NAMES`** (default **`ladybug`**) schedules the same pipeline (no modal). Background work uses **`waitUntil()`** + Next **`after()`** on the same task so OpenAI + ADO still run after the empty 200. **`chat.postEphemeral`** notifies the reacting user if the message cannot be loaded or the pipeline throws. Signature verification matches Interactivity.
 - **Shortcut / reaction pipeline** — Slack thread replies for user-visible outcomes; **`logError`** / **`logEvent`** for operational trace (including permalink failures, low confidence skips, ADO errors).
 
 ---

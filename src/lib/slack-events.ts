@@ -1,5 +1,6 @@
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
+import { after } from "next/server";
 import { logError, logEvent } from "@/lib/logger";
 import {
   processCreateAzureBugShortcut,
@@ -138,6 +139,26 @@ function buildShortcutPayloadFromLadybugReaction(
   };
 }
 
+async function postEphemeralHint(
+  slack: WebClient,
+  channelId: string,
+  userId: string,
+  text: string,
+) {
+  try {
+    await slack.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text,
+    });
+  } catch (e) {
+    await logError("ladybug: chat.postEphemeral failed", e, {
+      channelId,
+      userId,
+    });
+  }
+}
+
 async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
@@ -149,6 +170,13 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
   }
 
   const slack = new WebClient(botToken);
+
+  await logEvent("info", "ladybug pipeline: execution started", {
+    channelId: ctx.channelId,
+    messageTs: ctx.messageTs,
+    userId: ctx.userId,
+  });
+
   const message = await fetchSlackMessageForBugShortcut(
     slack,
     ctx.channelId,
@@ -160,13 +188,32 @@ async function runLadybugReactionPipeline(ctx: LadybugReactionContext) {
       channelId: ctx.channelId,
       messageTs: ctx.messageTs,
     });
+    await postEphemeralHint(
+      slack,
+      ctx.channelId,
+      ctx.userId,
+      ":warning: *Buggybot* couldn’t load this message from Slack (history empty or bot missing `channels:history` / `groups:history`, or bot not in the channel). Nothing was created.",
+    );
     return;
   }
 
   const payload = buildShortcutPayloadFromLadybugReaction(ctx, message);
-  await processCreateAzureBugShortcut(payload, null, {
-    triggerSource: "ladybug_reaction",
-  });
+  try {
+    await processCreateAzureBugShortcut(payload, null, {
+      triggerSource: "ladybug_reaction",
+    });
+  } catch (e) {
+    await logError("ladybug pipeline: processCreateAzureBugShortcut threw", e, {
+      channelId: ctx.channelId,
+      messageTs: ctx.messageTs,
+    });
+    await postEphemeralHint(
+      slack,
+      ctx.channelId,
+      ctx.userId,
+      ":x: *Buggybot* hit an error while creating the bug. Check `/admin` → Logs or Vercel function logs.",
+    );
+  }
 }
 
 export async function handleSlackEventsPost(req: Request): Promise<Response> {
@@ -254,15 +301,19 @@ export async function handleSlackEventsPost(req: Request): Promise<Response> {
       userId: ladybugCtx.userId,
     });
 
-    waitUntil(
-      runLadybugReactionPipeline(ladybugCtx).catch((e) =>
-        logError("waitUntil ladybug reaction task rejected", e, {
-          pathname,
-          channelId: ladybugCtx.channelId,
-          messageTs: ladybugCtx.messageTs,
-        }),
-      ),
+    /**
+     * Same promise: both `after()` (Next.js) and `waitUntil()` (Vercel) so background work keeps
+     * running after the 200 ack on different runtime combinations.
+     */
+    const ladybugTask = runLadybugReactionPipeline(ladybugCtx).catch((e) =>
+      logError("ladybug reaction background task rejected", e, {
+        pathname,
+        channelId: ladybugCtx.channelId,
+        messageTs: ladybugCtx.messageTs,
+      }),
     );
+    waitUntil(ladybugTask);
+    after(() => ladybugTask);
   }
 
   return new Response("", { status: 200 });
