@@ -26,13 +26,18 @@ function stepLine(label: string, state: ProgressStepState): string {
   return `${icon} ${label}`;
 }
 
-export function buildProgressModalView(steps: ProgressSteps): ModalView {
-  const body = [
+/** Same lines as the status modal — for thread replies when there is no modal (e.g. :ladybug: reaction). */
+export function formatProgressStepsMrkdwn(steps: ProgressSteps): string {
+  return [
     stepLine("Validating Slack message", steps.validate),
     stepLine("Extracting bug draft with AI", steps.ai),
     stepLine("Creating Azure DevOps bug", steps.ado),
     stepLine("Finalizing", steps.finalize),
   ].join("\n");
+}
+
+export function buildProgressModalView(steps: ProgressSteps): ModalView {
+  const body = formatProgressStepsMrkdwn(steps);
 
   return {
     type: "modal",

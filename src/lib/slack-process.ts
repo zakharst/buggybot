@@ -19,6 +19,7 @@ import {
   buildFailureModalView,
   buildProgressModalView,
   buildSuccessModalView,
+  formatProgressStepsMrkdwn,
   updateBugStatusModal,
   type ModalSync,
   type ProgressSteps,
@@ -60,6 +61,14 @@ type ShortcutCtx = {
   messageTs: string;
 };
 
+/** Status updates in the message thread (Slack does not allow a modal without `trigger_id` from reactions). */
+type ThreadProgressHandle = {
+  channelId: string;
+  ts: string | null;
+  /** First post failed; stop spamming postMessage on later phases. */
+  postFailed?: boolean;
+};
+
 async function fetchSlackUserEmail(
   slack: WebClient,
   userId: string,
@@ -83,16 +92,43 @@ async function postThreadReply(
   channelId: string,
   threadTs: string,
   text: string,
-) {
+): Promise<string | null> {
   try {
-    await slack.chat.postMessage({
+    const r = await slack.chat.postMessage({
       channel: channelId,
       thread_ts: threadTs,
       text,
     });
+    if (!r.ok || !r.ts) {
+      await logEvent("warn", "Slack postMessage failed or missing ts", {
+        channelId,
+        error: r.error,
+      });
+      return null;
+    }
+    return r.ts;
   } catch (e) {
     await logError("Slack chat.postMessage failed", e, { channelId, threadTs });
-    throw e;
+    return null;
+  }
+}
+
+async function updateThreadMessage(
+  slack: WebClient,
+  channelId: string,
+  ts: string,
+  text: string,
+) {
+  try {
+    const r = await slack.chat.update({ channel: channelId, ts, text });
+    if (!r.ok) {
+      await logEvent("warn", "Slack chat.update failed", {
+        channelId,
+        error: r.error,
+      });
+    }
+  } catch (e) {
+    await logError("Slack chat.update failed", e, { channelId, ts });
   }
 }
 
@@ -103,7 +139,14 @@ async function tryFinalThreadReply(
   text: string,
 ) {
   try {
-    await postThreadReply(slack, ctx.channelId, ctx.threadTs, text);
+    const ts = await postThreadReply(slack, ctx.channelId, ctx.threadTs, text);
+    if (!ts) {
+      await logEvent("warn", "Slack final thread reply: no message ts", {
+        channelId: ctx.channelId,
+        messageTs: ctx.messageTs,
+      });
+      return;
+    }
     await logEvent("info", "Slack shortcut final thread reply sent", {
       teamId: ctx.teamId,
       channelId: ctx.channelId,
@@ -118,25 +161,57 @@ async function tryFinalThreadReply(
   }
 }
 
+const LADYBUG_THREAD_PROGRESS_HEADER =
+  ":ladybug: *Azure DevOps bug* — _Slack cannot open the progress window for emoji reactions; updates appear in this thread._\n\n";
+
 async function showProgress(
   slack: WebClient,
+  ctx: ShortcutCtx,
   modalSync: ModalSync | null,
+  threadProgress: ThreadProgressHandle | null,
   steps: ProgressSteps,
   phase: string,
 ) {
-  if (!modalSync) return;
-  await updateBugStatusModal(
-    slack,
-    modalSync,
-    buildProgressModalView(steps),
-    "progress",
-    { phase },
-  );
+  if (modalSync) {
+    await updateBugStatusModal(
+      slack,
+      modalSync,
+      buildProgressModalView(steps),
+      "progress",
+      { phase },
+    );
+    return;
+  }
+  if (!threadProgress) return;
+  if (threadProgress.postFailed) return;
+  const body = formatProgressStepsMrkdwn(steps);
+  const text = `${LADYBUG_THREAD_PROGRESS_HEADER}*Progress*\n${body}`;
+  if (!threadProgress.ts) {
+    const ts = await postThreadReply(
+      slack,
+      ctx.channelId,
+      ctx.threadTs,
+      text,
+    );
+    if (!ts) {
+      threadProgress.postFailed = true;
+      return;
+    }
+    threadProgress.ts = ts;
+  } else {
+    await updateThreadMessage(
+      slack,
+      threadProgress.channelId,
+      threadProgress.ts,
+      text,
+    );
+  }
 }
 
 async function showFailure(
   slack: WebClient,
   modalSync: ModalSync | null,
+  threadProgress: ThreadProgressHandle | null,
   ctx: ShortcutCtx,
   reason: string,
   threadLine: string,
@@ -149,12 +224,22 @@ async function showFailure(
       "failure",
     );
   }
+  if (threadProgress?.ts) {
+    await updateThreadMessage(
+      slack,
+      threadProgress.channelId,
+      threadProgress.ts,
+      threadLine,
+    );
+    return;
+  }
   await tryFinalThreadReply(slack, ctx, threadLine);
 }
 
 async function showSuccess(
   slack: WebClient,
   modalSync: ModalSync | null,
+  threadProgress: ThreadProgressHandle | null,
   ctx: ShortcutCtx,
   workItemId: number,
   url: string,
@@ -165,7 +250,9 @@ async function showSuccess(
   if (modalSync) {
     await showProgress(
       slack,
+      ctx,
       modalSync,
+      null,
       {
         validate: "done",
         ai: "done",
@@ -190,11 +277,21 @@ async function showSuccess(
     opts?.hintWhenMediaExpectedButNone === true
       ? "\n\n:information_source: _No screenshots/videos were attached. Use an uploaded file on the message (not only a Block Kit image), invite the bot to this channel, add/reinstall with `files:read` + `channels:history` / `groups:history`, then check /admin logs if it persists._"
       : "";
-  await tryFinalThreadReply(
-    slack,
-    ctx,
-    `:white_check_mark: Azure DevOps Bug *#${workItemId}* created${assign} — ${url}${media}${mediaHint}`,
-  );
+  const successText = `:white_check_mark: Azure DevOps Bug *#${workItemId}* created${assign} — ${url}${media}${mediaHint}`;
+  if (threadProgress?.ts) {
+    await updateThreadMessage(
+      slack,
+      threadProgress.channelId,
+      threadProgress.ts,
+      successText,
+    );
+    await logEvent("info", "Slack ladybug thread status updated (success)", {
+      channelId: ctx.channelId,
+      messageTs: ctx.messageTs,
+    });
+    return;
+  }
+  await tryFinalThreadReply(slack, ctx, successText);
 }
 
 /** How the bug pipeline was started (Vercel logs: same `slackPayloadType` for reaction — we synthesize `message_action`). */
@@ -238,6 +335,10 @@ export async function processCreateAzureBugShortcut(
   const messageTs = message.ts;
   const threadTs = message.thread_ts ?? message.ts;
   const ctx: ShortcutCtx = { teamId, channelId, threadTs, messageTs };
+  const threadProgress: ThreadProgressHandle | null =
+    triggerSource === "ladybug_reaction"
+      ? { channelId, ts: null }
+      : null;
   const messageText = extractMessageText(message);
   if (dbg) {
     await logEvent("info", "[slack-debug] bug pipeline: context ready", {
@@ -254,6 +355,7 @@ export async function processCreateAzureBugShortcut(
       await showFailure(
         slack,
         modalSync,
+        threadProgress,
         ctx,
         "Bug automation is turned off in admin settings.",
         ":pause: *Bug not created* — automation is disabled in /admin.",
@@ -301,6 +403,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           `A bug already exists for this message (work item ${row.workItemId}).`,
           `:repeat: *Bug not created* — work item \`${row.workItemId}\` already exists for this message.`,
@@ -309,6 +412,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           "This message is already being processed.",
           ":hourglass_flowing_sand: *Bug not created* — this message is already being processed. Try again shortly.",
@@ -319,7 +423,9 @@ export async function processCreateAzureBugShortcut(
 
     await showProgress(
       slack,
+      ctx,
       modalSync,
+      threadProgress,
       {
         validate: "done",
         ai: "active",
@@ -366,6 +472,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           "OpenAI isn’t configured on the server.",
           ":x: *Bug not created* — OpenAI isn’t configured.",
@@ -396,6 +503,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           `OpenAI error: ${detail}`,
           `:x: *Bug not created* — OpenAI error.`,
@@ -437,6 +545,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           `This message isn’t treated as a software bug (conservative QA intake).${note}`,
           `:information_source: *No bug created* — not classified as a software bug.`,
@@ -455,6 +564,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           `Confidence too low (${parsed.confidence.toFixed(2)} < ${settings.confidenceThreshold}).`,
           `:thinking_face: *Bug not created* — confidence too low. Suggested title: _${parsed.title || "(none)"}_`,
@@ -472,7 +582,9 @@ export async function processCreateAzureBugShortcut(
 
       await showProgress(
         slack,
+        ctx,
         modalSync,
+        threadProgress,
         {
           validate: "done",
           ai: "done",
@@ -490,6 +602,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           "Azure DevOps isn’t fully configured (org, project, or PAT).",
           ":x: *Bug not created* — Azure DevOps isn’t fully configured.",
@@ -717,6 +830,7 @@ export async function processCreateAzureBugShortcut(
         await showFailure(
           slack,
           modalSync,
+          threadProgress,
           ctx,
           `Azure DevOps error: ${detail}${adoCreateFailureHint(e)}`,
           ":x: *Bug not created* — Azure DevOps error.",
@@ -797,7 +911,9 @@ export async function processCreateAzureBugShortcut(
 
       await showProgress(
         slack,
+        ctx,
         modalSync,
+        threadProgress,
         {
           validate: "done",
           ai: "done",
@@ -818,6 +934,7 @@ export async function processCreateAzureBugShortcut(
       await showSuccess(
         slack,
         modalSync,
+        threadProgress,
         ctx,
         created.id,
         created.url,
@@ -848,6 +965,7 @@ export async function processCreateAzureBugShortcut(
       await showFailure(
         slack,
         modalSync,
+        threadProgress,
         ctx,
         msg.slice(0, 500),
         ":x: *Bug not created* — something went wrong while creating the bug.",
@@ -868,6 +986,7 @@ export async function processCreateAzureBugShortcut(
       await showFailure(
         slack,
         modalSync,
+        threadProgress,
         ctx,
         "Something went wrong while handling the shortcut.",
         ":x: *Bug not created* — unexpected error.",
