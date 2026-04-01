@@ -357,6 +357,7 @@ export async function processCreateAzureBugShortcut(
           model: settings.openaiModel,
           messageText,
           slackMetadata,
+          refineSecondPassEnabled: settings.openaiRefineSecondPass,
         });
       } catch (e) {
         const detail = formatError(e).slice(0, 300);
@@ -548,8 +549,12 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
+      const slackMediaOn =
+        settings.slackMediaAttachmentsEnabled &&
+        process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1";
+
       let mediaAttached = 0;
-      if (process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1") {
+      if (slackMediaOn) {
         slackInteractionDiag({ step: "slack_media_attach_started", workItemId: created.id });
         try {
           const { downloads, skipped } = await collectSlackMessageMediaDownloads({
@@ -558,6 +563,8 @@ export async function processCreateAzureBugShortcut(
             channelId,
             messageTs,
             threadTs: ctx.threadTs,
+            maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
+            maxFiles: settings.slackMediaMaxFilesPerBug,
           });
           if (skipped.length) {
             await logEvent("warn", "slack media skipped for ADO", {

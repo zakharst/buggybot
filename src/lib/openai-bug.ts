@@ -108,18 +108,15 @@ Hard rules:
 
 Return the full JSON object matching the same schema as the draft.`;
 
-/** On by default for higher ADO quality; set OPENAI_BUG_REFINE_SECOND_PASS=0 to save ~one API call per bug. */
-function bugRefineSecondPassEnabled(): boolean {
+/**
+ * Admin toggle (`refineSecondPass`) unless env forces off (save one API call per bug).
+ */
+function shouldRunRefineSecondPass(settingsEnabled: boolean): boolean {
   const v = process.env.OPENAI_BUG_REFINE_SECOND_PASS?.trim().toLowerCase();
-  if (
-    v === "0" ||
-    v === "false" ||
-    v === "no" ||
-    v === "off"
-  ) {
+  if (v === "0" || v === "false" || v === "no" || v === "off") {
     return false;
   }
-  return true;
+  return settingsEnabled;
 }
 
 type BugExamplesJson = {
@@ -315,6 +312,8 @@ export async function messageToBugJson(params: {
   model: string;
   messageText: string;
   slackMetadata: string;
+  /** From /admin (`openaiRefineSecondPass`); defaults to true when omitted. */
+  refineSecondPassEnabled?: boolean;
 }): Promise<BugIntakeResult> {
   const client = new OpenAI({ apiKey: params.apiKey });
 
@@ -352,7 +351,7 @@ export async function messageToBugJson(params: {
     throw new Error("OpenAI returned no parsed bug intake");
   }
 
-  if (bugRefineSecondPassEnabled()) {
+  if (shouldRunRefineSecondPass(params.refineSecondPassEnabled ?? true)) {
     const refineCompletion = await client.beta.chat.completions.parse({
       model: params.model,
       temperature: 0.1,

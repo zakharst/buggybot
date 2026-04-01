@@ -56,8 +56,10 @@ export function AdminPanel(props: {
           <p className="text-sm text-[var(--muted)]">
             This page is protected with{" "}
             <strong className="font-medium text-[var(--text)]">HTTP Basic Auth</strong>{" "}
-            (browser prompt). Preferences live in Postgres; API keys stay in
-            environment variables.
+            (browser prompt). Automation, OpenAI, Slack→ADO media, QA pool, and
+            ADO org/project overrides are stored in Postgres. Secrets (tokens,
+            PAT, DATABASE_URL) and process-template env (required fields, TCM
+            tab toggles) stay in environment variables — see README.
           </p>
         </div>
       </div>
@@ -154,6 +156,71 @@ export function AdminPanel(props: {
               />
             </label>
           </div>
+          <div className="mt-8 border-t border-[var(--border)] pt-6">
+            <h3 className="text-base font-medium">Slack → ADO attachments</h3>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Images and videos on the Slack message are uploaded to the new
+              work item. Bot scopes:{" "}
+              <code className="text-[var(--accent)]">files:read</code>,{" "}
+              <code className="text-[var(--accent)]">channels:history</code>,{" "}
+              <code className="text-[var(--accent)]">groups:history</code>. Env{" "}
+              <code className="text-[var(--accent)]">
+                AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS=1
+              </code>{" "}
+              forces off even if enabled here.
+            </p>
+            <label className="mt-4 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="slackMediaAttachmentsEnabled"
+                value="on"
+                defaultChecked={settings.slackMediaAttachmentsEnabled}
+                className="h-4 w-4 rounded border-[var(--border)]"
+              />
+              <span>
+                Attach screenshots and videos from the Slack message to the
+                bug
+              </span>
+            </label>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-[var(--muted)]">
+                  Max file size (MB per file)
+                </span>
+                <input
+                  type="number"
+                  name="slackMediaMaxMegabytes"
+                  min={1}
+                  max={120}
+                  step={1}
+                  defaultValue={Math.min(
+                    120,
+                    Math.max(
+                      1,
+                      Math.round(
+                        settings.slackMediaMaxBytesPerFile / 1024 / 1024,
+                      ),
+                    ),
+                  )}
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-[var(--muted)]">
+                  Max media files per bug
+                </span>
+                <input
+                  type="number"
+                  name="slackMediaMaxFilesPerBug"
+                  min={1}
+                  max={20}
+                  step={1}
+                  defaultValue={settings.slackMediaMaxFilesPerBug}
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                />
+              </label>
+            </div>
+          </div>
         </section>
 
         <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
@@ -165,6 +232,23 @@ export function AdminPanel(props: {
               defaultValue={settings.openaiModel}
               className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 outline-none focus:ring-1 focus:ring-[var(--accent)]"
             />
+          </label>
+          <label className="mt-4 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="openaiRefineSecondPass"
+              value="on"
+              defaultChecked={settings.openaiRefineSecondPass}
+              className="h-4 w-4 rounded border-[var(--border)]"
+            />
+            <span>
+              Second OpenAI pass (polish JSON before ADO; ~2× model calls per
+              bug). Env{" "}
+              <code className="text-[var(--accent)]">
+                OPENAI_BUG_REFINE_SECOND_PASS=0
+              </code>{" "}
+              forces off.
+            </span>
           </label>
         </section>
 

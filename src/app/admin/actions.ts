@@ -48,6 +48,14 @@ export async function saveAdminSettingsAction(
   const qaPoolText = String(formData.get("qaPoolText") ?? "");
   const assignmentModeRaw = String(formData.get("assignmentMode") ?? "");
   const automationEnabled = formData.get("automationEnabled") === "on";
+  const openaiRefineSecondPass =
+    formData.get("openaiRefineSecondPass") === "on";
+  const slackMediaAttachmentsEnabled =
+    formData.get("slackMediaAttachmentsEnabled") === "on";
+  const slackMediaMaxMegabytesRaw = Number(
+    formData.get("slackMediaMaxMegabytes"),
+  );
+  const slackMediaMaxFilesRaw = Number(formData.get("slackMediaMaxFilesPerBug"));
   const confidenceRaw = Number(formData.get("confidenceThreshold"));
 
   const qaEmails: string[] = [];
@@ -70,10 +78,25 @@ export async function saveAdminSettingsAction(
     ? Math.min(1, Math.max(0, confidenceRaw))
     : 0.72;
 
+  const slackMediaMaxMegabytes = Number.isFinite(slackMediaMaxMegabytesRaw)
+    ? Math.min(120, Math.max(1, slackMediaMaxMegabytesRaw))
+    : 25;
+  const slackMediaMaxBytesPerFile = Math.round(
+    slackMediaMaxMegabytes * 1024 * 1024,
+  );
+
+  const slackMediaMaxFilesPerBug = Number.isFinite(slackMediaMaxFilesRaw)
+    ? Math.min(20, Math.max(1, Math.floor(slackMediaMaxFilesRaw)))
+    : 8;
+
   const partial: Partial<SettingsPayload> = {
     adoOrg: adoOrg || undefined,
     adoProject: adoProject || undefined,
     openaiModel: openaiModel || DEFAULT_OPENAI_MODEL,
+    openaiRefineSecondPass,
+    slackMediaAttachmentsEnabled,
+    slackMediaMaxBytesPerFile,
+    slackMediaMaxFilesPerBug,
     qaEmails,
     assignmentMode: mode.data,
     automationEnabled,

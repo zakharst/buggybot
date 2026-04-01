@@ -102,20 +102,6 @@ function pickSlackFileName(f: FileElement): string {
   return `slack-attachment.${ft || "bin"}`;
 }
 
-export function maxSlackAttachmentBytes(): number {
-  const raw = process.env.AZURE_DEVOPS_MAX_SLACK_ATTACHMENT_BYTES?.trim();
-  const n = raw ? Number(raw) : NaN;
-  if (Number.isFinite(n) && n > 0) return Math.min(n, 120_000_000);
-  return 25 * 1024 * 1024;
-}
-
-export function maxSlackMediaFilesPerBug(): number {
-  const raw = process.env.AZURE_DEVOPS_MAX_SLACK_MEDIA_FILES?.trim();
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  if (Number.isFinite(n) && n > 0) return Math.min(n, 20);
-  return 8;
-}
-
 /**
  * Download a Slack-hosted file using the bot token (requires `files:read`).
  */
@@ -155,10 +141,15 @@ export async function collectSlackMessageMediaDownloads(params: {
   channelId: string;
   messageTs: string;
   threadTs: string;
+  maxBytesPerFile: number;
+  maxFiles: number;
 }): Promise<{ downloads: SlackMediaDownload[]; skipped: string[] }> {
   const skipped: string[] = [];
-  const maxBytes = maxSlackAttachmentBytes();
-  const maxFiles = maxSlackMediaFilesPerBug();
+  const maxBytes = Math.min(
+    Math.max(params.maxBytesPerFile, 1_000_000),
+    120_000_000,
+  );
+  const maxFiles = Math.min(Math.max(params.maxFiles, 1), 20);
 
   const elements = await fetchImageAndVideoFilesForSlackMessage(
     params.slack,

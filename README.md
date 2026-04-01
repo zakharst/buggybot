@@ -232,9 +232,7 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_DISABLE_TCM_TAB_FILL` | Set to `1` to stop filling **Repro Steps**, **System Info**, and **Acceptance Criteria** (defaults target standard Azure Boards Bug refs). Use if work item create fails with an unknown field. |
 | `AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB` | Set to `1` to skip only **Acceptance Criteria** (`Microsoft.VSTS.Common.AcceptanceCriteria`) when your Bug type has no such field. |
 | `AZURE_DEVOPS_REPRO_STEPS_FIELD_REF` / `AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF` / `AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF` | Override reference names if your process template uses different fields for those tabs. |
-| `AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS` | Set to `1` to skip copying **images/videos** from the Slack message into ADO **Attachments** (default: **enabled**; requires Slack **`files:read`** + **`channels:history`** / **`groups:history`**). |
-| `AZURE_DEVOPS_MAX_SLACK_ATTACHMENT_BYTES` | Max size per file (default **25MB**; cap **120MB**). |
-| `AZURE_DEVOPS_MAX_SLACK_MEDIA_FILES` | Max image/video files per bug (default **8**, max **20**). |
+| `AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS` | Set to `1` to **force off** Slack → ADO media (overrides **/admin**). Otherwise use **/admin** → **Slack → ADO attachments**. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
