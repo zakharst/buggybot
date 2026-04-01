@@ -7,8 +7,14 @@ const nextConfig: NextConfig = {
     },
   },
   outputFileTracingIncludes: {
-    "/api/slack/interactions": ["./config/openai-bug-backlog-examples.md"],
-    "/api/slack": ["./config/openai-bug-backlog-examples.md"],
+    "/api/slack/interactions": [
+      "./config/openai-bug-backlog-examples.md",
+      "./config/openai-bug-style-guide.md",
+    ],
+    "/api/slack": [
+      "./config/openai-bug-backlog-examples.md",
+      "./config/openai-bug-style-guide.md",
+    ],
   },
 };
 

@@ -16,7 +16,9 @@
     "ado:list-bug-fields": "node scripts/ado-list-required-bug-fields.mjs",
     "ado:snapshot-required-field-refs": "node --env-file=.env scripts/ado-snapshot-required-field-refs.mjs",
     "ado:inspect-bug-layout": "node --env-file=.env scripts/ado-inspect-bug-layout.mjs",
-    "openai:snapshot-bug-examples": "node --env-file=.env scripts/openai-snapshot-bug-examples.mjs"
+    "openai:snapshot-bug-examples": "node --env-file=.env scripts/openai-snapshot-bug-examples.mjs",
+    "ado:snapshot-bug-backlog-md": "node --env-file=.env scripts/ado-snapshot-bug-backlog-md.mjs",
+    "openai:derive-style-from-backlog": "node scripts/openai-derive-style-from-backlog.mjs"
   },
   "dependencies": {
     "@slack/web-api": "^7.8.0",

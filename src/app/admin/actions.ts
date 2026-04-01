@@ -11,6 +11,7 @@ import {
   settingsPayloadSchema,
   type SettingsPayload,
 } from "@/lib/settings-types";
+import { slackMediaPerFileCapMegabytes } from "@/lib/slack-ado-media-limits";
 
 async function requireAdminBasicAuth(): Promise<
   { ok: true } | { ok: false; error: string }
@@ -78,9 +79,10 @@ export async function saveAdminSettingsAction(
     ? Math.min(1, Math.max(0, confidenceRaw))
     : 0.72;
 
+  const mbCap = slackMediaPerFileCapMegabytes();
   const slackMediaMaxMegabytes = Number.isFinite(slackMediaMaxMegabytesRaw)
-    ? Math.min(120, Math.max(1, slackMediaMaxMegabytesRaw))
-    : 25;
+    ? Math.min(mbCap, Math.max(1, slackMediaMaxMegabytesRaw))
+    : 12;
   const slackMediaMaxBytesPerFile = Math.round(
     slackMediaMaxMegabytes * 1024 * 1024,
   );

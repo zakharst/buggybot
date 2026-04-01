@@ -16,7 +16,8 @@ buggybot/
 │   ├── ado-bug-field-refs.defaults.json   # Default ref names for tabs / Reported from
 │   ├── ado-bug-required-field-refs.json   # alwaysRequired refs snapshot (OpenAI prompt)
 │   ├── openai-bug-examples.json           # systemPromptExtra + JSON few-shot (optional)
-│   └── openai-bug-backlog-examples.md     # long backlog paste → system prompt (optional)
+│   ├── openai-bug-backlog-examples.md     # long backlog → system prompt (optional)
+│   └── openai-bug-style-guide.md          # derived rules + excerpts (npm run openai:derive-style-from-backlog)
 ├── drizzle.config.ts
 ├── drizzle/
 │   └── 0000_init.sql          # Copy of schema for reference / manual apply
@@ -51,6 +52,7 @@ buggybot/
 │       ├── openai-bug.ts      # Structured bug JSON (+ openai-bug-examples.json few-shot)
 │       ├── settings-types.ts
 │       ├── settings.ts
+│       ├── slack-ado-media-limits.ts  # ADO attachment caps + RAM budget (Slack→ADO)
 │       ├── slack-message-media.ts  # Slack images/videos → ADO attachments
 │       ├── slack-payload.ts
 │       ├── slack-process.ts   # Main shortcut pipeline
@@ -200,9 +202,12 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 
 **OpenAI — backlog style (no ADO call when users file from Slack):**
 
-1. **`config/openai-bug-backlog-examples.md`** — Your pasted real bugs (markdown). Read at runtime and appended to the **system** prompt. On Vercel the file is included via **`outputFileTracingIncludes`** in `next.config.ts`. Optional path: **`OPENAI_BACKLOG_EXAMPLES_MD`**.
-2. **`config/openai-bug-examples.json`** → **`systemPromptExtra`**: short org rules. Optional **`examples`**, or **`npm run openai:snapshot-bug-examples`** ( **`OPENAI_BUG_EXAMPLES_COUNT`** ) to fill few-shot from ADO.
-3. If **`examples`** is empty, five built-in few-shot pairs in code are used.
+1. **`config/openai-bug-style-guide.md`** — **Primary** context for tone/shape (rules + stratified excerpts). Regenerate: **`npm run openai:derive-style-from-backlog`** after **`ado:snapshot-bug-backlog-md`**. Optional path: **`OPENAI_BUG_STYLE_GUIDE_MD`**.
+2. **`config/openai-bug-backlog-examples.md`** — Full export (optional at **runtime**). By default the app **does not** append the raw backlog when the style guide file is present (saves tokens on both passes; refine never includes raw backlog unless you set **`OPENAI_BUG_REFINE_RAW_BACKLOG_MAX_CHARS`**). To force raw examples on intake, set **`OPENAI_BUG_RAW_BACKLOG_MAX_CHARS`** (e.g. `120000`). If there is **no** style guide on disk, intake falls back to **48k** chars of raw backlog. Regenerate export: **`npm run ado:snapshot-bug-backlog-md`**. Optional path: **`OPENAI_BACKLOG_EXAMPLES_MD`**. Both markdown files stay in **`outputFileTracingIncludes`** for Vercel.
+3. **`config/openai-bug-examples.json`** → **`systemPromptExtra`**: short org rules. Optional **`examples`**, or **`npm run openai:snapshot-bug-examples`** ( **`OPENAI_BUG_EXAMPLES_COUNT`** ) to fill few-shot from ADO.
+4. If **`examples`** is empty, five built-in few-shot pairs in code are used.
+
+**Token-efficient default:** derived style only on intake + refine; raw backlog omitted when **`openai-bug-style-guide.md`** exists. Re-enable raw paste via env (see table below).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -223,7 +228,13 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 |----------|-------------|
 | `OPENAI_MODEL` | Default model if not set in admin (default in code: **`gpt-4o`**) |
 | `OPENAI_BUG_REFINE_SECOND_PASS` | Set to **`0`** / **`false`** / **`off`** to skip the second polish pass (default: **on**, better ADO text, ~2× OpenAI calls per bug) |
+| `SLACK_BUG_APP_BUILD` | First line in Description: **`Build: …`** (default **`3.5.0_OTA_2`**) |
+| `ADO_BACKLOG_MD_COUNT` | For **`npm run ado:snapshot-bug-backlog-md`**: how many recent Bugs to export (default **500**, max 500) |
+| `ADO_BACKLOG_MD_OUT` | Output path for backlog markdown (default **`config/openai-bug-backlog-examples.md`**) |
 | `OPENAI_BACKLOG_EXAMPLES_MD` | Optional path (relative to cwd) to a markdown file of real bugs; default **`config/openai-bug-backlog-examples.md`**. |
+| `OPENAI_BUG_STYLE_GUIDE_MD` | Optional path to derived style guide; default **`config/openai-bug-style-guide.md`**. Regenerate with **`npm run openai:derive-style-from-backlog`**. |
+| `OPENAI_BUG_RAW_BACKLOG_MAX_CHARS` | Max chars of raw backlog appended on **intake** (0 = off). Default: **0** when style guide file exists, else **48000**. Example to restore old behavior: **`120000`**. |
+| `OPENAI_BUG_REFINE_RAW_BACKLOG_MAX_CHARS` | Raw backlog on **refine** pass; default **0** (style guide + draft only). Set to match intake if you want. |
 | `AZURE_DEVOPS_WORK_ITEM_TYPE` | Work item type segment (default `Bug`) |
 | `AZURE_DEVOPS_REQUIRED_FIELD_VALUES` | Optional JSON **object** of field ref → value, applied on every create. **No WIQL or work-item fetch at create**—set this once in Vercel (or `.env`) and update when Area/Sprint/tags change. Keys for title, description, severity, and assignee are ignored. **Empty strings are dropped** (picklists reject them). **Discover fields:** `npm run ado:list-bug-fields`. |
 | `AZURE_DEVOPS_REPORTED_FROM` | Overrides the built-in default **`DT team`** for **`Custom.Reportedfrom`** on every Slack create (wins over `REQUIRED_FIELD_VALUES`). Must match the picklist exactly (see `ado:list-bug-fields`). |
@@ -233,6 +244,8 @@ Slack **Interactivity** POSTs go to **`${APP_BASE_URL}/api/slack/interactions`**
 | `AZURE_DEVOPS_DISABLE_ACCEPTANCE_CRITERIA_TAB` | Set to `1` to skip only **Acceptance Criteria** (`Microsoft.VSTS.Common.AcceptanceCriteria`) when your Bug type has no such field. |
 | `AZURE_DEVOPS_REPRO_STEPS_FIELD_REF` / `AZURE_DEVOPS_SYSTEM_INFO_FIELD_REF` / `AZURE_DEVOPS_ACCEPTANCE_CRITERIA_FIELD_REF` | Override reference names if your process template uses different fields for those tabs. |
 | `AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS` | Set to `1` to **force off** Slack → ADO media (overrides **/admin**). Otherwise use **/admin** → **Slack → ADO attachments**. |
+| `AZURE_DEVOPS_MAX_ATTACHMENT_BYTES` | Optional. **Azure DevOps Services** hard limit is **60 MB** per attachment (see [object limits](https://learn.microsoft.com/en-us/azure/devops/organizations/settings/work/object-limits)). Default cap in app matches that. On **DevOps Server**, set this if your collection allows a higher per-file size. |
+| `SLACK_MEDIA_MAX_TOTAL_BYTES` | Optional. Approximate **sum** of all Slack image/video bytes held in RAM before ADO upload (default **~220 MiB**). Lower on small function memory; raise if you need many large files per message. |
 | `SLACK_DEBUG_INTERACTIONS` | Set to `1` to log safe diagnostics (`[slack-debug]…`): pathname, payload type, callback id, message length, OpenAI/ADO/Slack checkpoints. No tokens or message text. |
 
 **Azure DevOps `TF401320` / required picklists:** Put the needed values in **`AZURE_DEVOPS_REQUIRED_FIELD_VALUES`**. **“Reported from”** defaults to **`DT team`**. **`npm run ado:list-bug-fields`** prints allowed values. **`npm run ado:snapshot-required-field-refs`** refreshes **`config/ado-bug-required-field-refs.json`** (bundled at build). For edge cases, **`AZURE_DEVOPS_CREATE_EXTRA_PATCH`**.
@@ -266,7 +279,7 @@ To sign out: close the session using the browser’s password manager / “sign 
 
 ## 9. Behavior summary
 
-- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug, Azure DevOps **Bug** (Slack permalink in **Description** footer, no Discussion comment), **images/videos from the message attached in ADO** when scopes allow, QA assignee from pool, thread reply with work item link.
+- Message shortcut **`create_azure_bug`** → verify Slack signature → **200 OK** immediately → background: idempotency row, OpenAI structured bug (**`Environment: dev|prod`** and **`Platform: iOS|Android`** from the message; **`Production`** tag when environment is **prod**), **`Build:`** from env, Slack media **downloaded from Slack, attached, and embedded** in **Description** (`<img>` for images), **no assignee**, thread reply with work item link.
 
 ## License
 

@@ -7,13 +7,45 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import { loadAdoRequiredFieldRefsForPrompt } from "@/lib/ado-required-field-refs";
 import bugExamplesFile from "../../config/openai-bug-examples.json";
 
+/** Normalize free text from the model to dev | prod | "". */
+function normalizeDeploymentEnvironment(raw: string): "" | "dev" | "prod" {
+  const t = raw.trim().toLowerCase();
+  if (!t) return "";
+  const isNonProd =
+    /\b(dev|staging|uat|test|pre[-\s]?prod|preprod|internal|qa)\b/.test(t);
+  const isProd =
+    /\b(prod|production|live|прод|бойов|реліз)\b/.test(t) || /^prod\b/.test(t);
+  if (isProd && !isNonProd) return "prod";
+  if (isNonProd) return "dev";
+  return "";
+}
+
 /** QA-style Azure DevOps bug intake (strict JSON from model; description HTML built in app). */
 export const bugIntakeSchema = z.object({
   is_bug: z.boolean(),
   title: z
     .string()
     .transform((s) => s.trim().slice(0, 140)),
-  environment: z.string(),
+  /**
+   * Deployment where the bug was seen: dev (incl. staging/UAT/test) vs prod (live).
+   * Empty string only if impossible to infer from the message.
+   */
+  deployment_environment: z
+    .string()
+    .transform((s) => normalizeDeploymentEnvironment(s)),
+  /**
+   * Mobile client only: iOS or Android when stated or obvious; otherwise "".
+   */
+  platform: z
+    .string()
+    .transform((s) => {
+      const t = s.trim();
+      if (!t) return "";
+      const lower = t.toLowerCase();
+      if (/\bios\b|iphone|ipad|ipados/.test(lower)) return "iOS";
+      if (/\bandroid\b/.test(lower)) return "Android";
+      return "";
+    }),
   /** Required arrays for structured-output JSON schema (use [] when empty). */
   preconditions: z.array(z.string()),
   steps_to_reproduce: z.array(z.string()),
@@ -32,18 +64,20 @@ Your job is to convert Slack bug reports into structured bug data in the style o
 
 Our style:
 - short direct bug title
-- QA-style wording (STR / preconditions / actual / expected patterns when the backlog reference suggests it)
+- QA-style wording (STR / preconditions / actual / expected — follow the **Derived style** section when present; optional raw backlog below is extra only)
 - concise and factual
 - no polished narrative
 - no root cause assumptions
 - no invented details
 - strict JSON only
+- clean description logic: one idea per section; no repeating the title in the body; no filler ("see above"); steps are imperative and ordered; actual vs expected are single focused statements when possible
 
 Return JSON only with this schema:
 {
   "is_bug": boolean,
   "title": string,
-  "environment": string,
+  "deployment_environment": "" | "dev" | "prod",
+  "platform": "" | "iOS" | "Android",
   "preconditions": string[],
   "steps_to_reproduce": string[],
   "actual_result": string,
@@ -55,13 +89,15 @@ Return JSON only with this schema:
 
 Rules:
 - Use only facts present in the source message (and obvious spelling fixes that do not change meaning).
-- Maximize completeness within that constraint: prefer non-empty fields when the message gives any hint—e.g. platform or channel words → environment; "on Overview" / "after deleting report" → preconditions or early steps; shorthand ("can't submit") → spell out the actions the user clearly implied in order (open, fill, tap) without naming new screens they did not mention.
+- deployment_environment: use "prod" only when the reporter clearly means live/production (prod, production, live, реліз, бойовий, промислове середовище). Use "dev" for dev/staging/UAT/test/pre-prod/preprod or internal builds. Use "" only when there is no usable hint.
+- platform: use "iOS" or "Android" only when the message clearly indicates that client; otherwise "". Do not set platform for generic "mobile" without OS; do not infer OS from screenshots alone.
+- Maximize completeness within that constraint: "on Overview" / "after deleting report" → preconditions or early steps; shorthand ("can't submit") → spell out the actions the user clearly implied in order (open, fill, tap) without naming new screens they did not mention.
 - If a field truly has no support in the message, leave it empty (empty string or []).
 - When is_bug is true, steps_to_reproduce should be ordered, one action or observation per array element when possible; merge choppy fragments that describe the same step.
 - Only set is_bug=true if the message clearly describes incorrect, broken, inconsistent, missing, crashing, blocked, or unexpected product behavior.
 - If the message is vague, exploratory, or not clearly a bug, set is_bug=false or use low confidence.
-- Do not invent environment, preconditions, steps, notes, device details, enterprise names, roles, pages, error codes, or technical causes that are not stated or clearly implied by the same message.
-- Preserve environment/platform/module/page names only if explicitly mentioned (or clearly implied by product shorthand the team uses in the message).
+- Do not invent deployment_environment, platform, preconditions, steps, notes, device details, enterprise names, roles, pages, error codes, or technical causes that are not stated or clearly implied by the same message.
+- Preserve module/page names only if explicitly mentioned (or clearly implied by product shorthand the team uses in the message).
 - Use notes for scope ("also when…"), workarounds, or secondary symptoms the user mentioned without cluttering steps.
 - Severity must be one of: low, medium, high, critical, or empty string.
 - Confidence must be a number from 0 to 1 (lower when the report is thin or ambiguous).
@@ -103,6 +139,7 @@ Goals (strict factual bounds):
 Hard rules:
 - Do not introduce new entities: apps, pages, roles, versions, devices, enterprises, URLs, or error strings not present in the Slack message or draft.
 - Do not flip is_bug from true to false or false to true.
+- Do not flip deployment_environment or platform unless the Slack message clearly contradicts the draft.
 - Severity must remain one of: low, medium, high, critical, or empty string.
 - Adjust confidence by at most 0.1 from the draft value, and only if wording changes justify it.
 
@@ -127,36 +164,130 @@ type BugExamplesJson = {
 const bugExamples = bugExamplesFile as BugExamplesJson;
 
 const DEFAULT_BACKLOG_MD = "config/openai-bug-backlog-examples.md";
-const BACKLOG_MD_MAX_CHARS = 120_000;
-let backlogMarkdownBlockCache: string | undefined;
+const DEFAULT_STYLE_GUIDE_MD = "config/openai-bug-style-guide.md";
+/** When no style guide on disk, still give the model some raw examples (chars). */
+const RAW_BACKLOG_FALLBACK_MAX_CHARS = 48_000;
+/** Hard cap so env mistakes do not blow the context window. */
+const RAW_BACKLOG_HARD_CAP = 200_000;
+const STYLE_GUIDE_MD_MAX_CHARS = 32_000;
+const STYLE_GUIDE_MIN_CHARS_FOR_SKIP_RAW = 400;
 
-function backlogReferenceMarkdownBlock(): string {
-  if (backlogMarkdownBlockCache !== undefined) {
-    return backlogMarkdownBlockCache;
+const backlogMarkdownByMaxChars = new Map<number, string>();
+let styleGuideMarkdownBlockCache: string | undefined;
+
+function parseNonNegativeIntEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const t = raw.trim();
+  if (!t) return undefined;
+  const n = Number.parseInt(t, 10);
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return Math.min(n, RAW_BACKLOG_HARD_CAP);
+}
+
+/** True when committed/generated style guide is present — raw backlog is redundant for most teams. */
+function hasSubstantialStyleGuideOnDisk(): boolean {
+  const rel =
+    process.env.OPENAI_BUG_STYLE_GUIDE_MD?.trim() || DEFAULT_STYLE_GUIDE_MD;
+  const abs = join(process.cwd(), rel);
+  try {
+    if (!existsSync(abs)) return false;
+    const s = readFileSync(abs, "utf8").trim();
+    return s.length >= STYLE_GUIDE_MIN_CHARS_FOR_SKIP_RAW;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Max chars of raw backlog markdown appended on the **first** (intake) call.
+ * Default: 0 if `openai-bug-style-guide.md` exists (optimal — excerpts already cover shape/voice).
+ * Else `RAW_BACKLOG_FALLBACK_MAX_CHARS`. Override: `OPENAI_BUG_RAW_BACKLOG_MAX_CHARS`.
+ */
+function intakeRawBacklogMaxChars(): number {
+  const fromEnv = parseNonNegativeIntEnv(process.env.OPENAI_BUG_RAW_BACKLOG_MAX_CHARS);
+  if (fromEnv !== undefined) return fromEnv;
+  return hasSubstantialStyleGuideOnDisk() ? 0 : RAW_BACKLOG_FALLBACK_MAX_CHARS;
+}
+
+/**
+ * Raw backlog on the **refine** pass — default off (draft + style guide is enough; saves a large repeat prefix).
+ * Set `OPENAI_BUG_REFINE_RAW_BACKLOG_MAX_CHARS` to mirror intake if you want.
+ */
+function refineRawBacklogMaxChars(): number {
+  const fromEnv = parseNonNegativeIntEnv(
+    process.env.OPENAI_BUG_REFINE_RAW_BACKLOG_MAX_CHARS,
+  );
+  if (fromEnv !== undefined) return fromEnv;
+  return 0;
+}
+
+/**
+ * Derived rules + stratified excerpts from `npm run openai:derive-style-from-backlog`.
+ * Loaded before the raw backlog so the model sees “how we format” first.
+ */
+function styleGuideMarkdownBlock(): string {
+  if (styleGuideMarkdownBlockCache !== undefined) {
+    return styleGuideMarkdownBlockCache;
   }
   const rel =
-    process.env.OPENAI_BACKLOG_EXAMPLES_MD?.trim() || DEFAULT_BACKLOG_MD;
+    process.env.OPENAI_BUG_STYLE_GUIDE_MD?.trim() || DEFAULT_STYLE_GUIDE_MD;
   const abs = join(process.cwd(), rel);
   if (!existsSync(abs)) {
-    backlogMarkdownBlockCache = "";
+    styleGuideMarkdownBlockCache = "";
     return "";
   }
   try {
     const raw = readFileSync(abs, "utf8").trim();
     if (!raw) {
-      backlogMarkdownBlockCache = "";
+      styleGuideMarkdownBlockCache = "";
       return "";
     }
     const clipped =
-      raw.length > BACKLOG_MD_MAX_CHARS
-        ? `${raw.slice(0, BACKLOG_MD_MAX_CHARS)}\n\n…(truncated)`
+      raw.length > STYLE_GUIDE_MD_MAX_CHARS
+        ? `${raw.slice(0, STYLE_GUIDE_MD_MAX_CHARS)}\n\n…(truncated)`
         : raw;
-    backlogMarkdownBlockCache =
-      "\n\n## Reference — real bugs from our backlog (match QA phrasing, Env/Preconditions/Steps/Actual/Expected; STR/CASE/NOTE patterns when similar)\n\n" +
+    styleGuideMarkdownBlockCache =
+      "\n\n## Derived style — learn formatting from our backlog (rules + excerpts)\n\n" +
       clipped;
-    return backlogMarkdownBlockCache;
+    return styleGuideMarkdownBlockCache;
   } catch {
-    backlogMarkdownBlockCache = "";
+    styleGuideMarkdownBlockCache = "";
+    return "";
+  }
+}
+
+function backlogReferenceMarkdownBlock(maxChars: number): string {
+  if (maxChars <= 0) {
+    return "";
+  }
+  const cached = backlogMarkdownByMaxChars.get(maxChars);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const rel =
+    process.env.OPENAI_BACKLOG_EXAMPLES_MD?.trim() || DEFAULT_BACKLOG_MD;
+  const abs = join(process.cwd(), rel);
+  if (!existsSync(abs)) {
+    backlogMarkdownByMaxChars.set(maxChars, "");
+    return "";
+  }
+  try {
+    const raw = readFileSync(abs, "utf8").trim();
+    if (!raw) {
+      backlogMarkdownByMaxChars.set(maxChars, "");
+      return "";
+    }
+    const clipped =
+      raw.length > maxChars
+        ? `${raw.slice(0, maxChars)}\n\n…(truncated)`
+        : raw;
+    const block =
+      "\n\n## Reference — raw backlog bugs (optional extra examples; derived style above is primary)\n\n" +
+      clipped;
+    backlogMarkdownByMaxChars.set(maxChars, block);
+    return block;
+  } catch {
+    backlogMarkdownByMaxChars.set(maxChars, "");
     return "";
   }
 }
@@ -190,7 +321,7 @@ ${lines}
 
 Rules for intake:
 - Do not add these keys to your JSON output.
-- Do not invent AreaPath, IterationPath, tags, ValueArea, or custom process field values; the server applies the configured values on create. If the reporter disagrees with area/sprint/classification, record only their wording in environment or notes—do not emit ADO field names.
+- Do not invent AreaPath, IterationPath, tags, ValueArea, or custom process field values; the server applies the configured values on create. If the reporter disagrees with area/sprint/classification, record only their wording in notes—do not emit ADO field names.
 - Keep title and structured fields focused on the defect; avoid repeating boilerplate that duplicates configured area/sprint/tags.`;
 }
 
@@ -201,7 +332,8 @@ Input:
 const EX1_ASSISTANT = JSON.stringify({
   is_bug: true,
   title: "Value is wrapped across multiple lines",
-  environment: "dev",
+  deployment_environment: "dev",
+  platform: "",
   preconditions: [
     "Overview page is opened",
     "Enterprise is C.J. Klep",
@@ -224,7 +356,8 @@ Input:
 const EX2_ASSISTANT = JSON.stringify({
   is_bug: true,
   title: "Orders page crashes when opening customer details",
-  environment: "staging",
+  deployment_environment: "dev",
+  platform: "",
   preconditions: ["Orders page is opened"],
   steps_to_reproduce: ["Click customer details"],
   actual_result: "The page crashes with a blank screen.",
@@ -241,7 +374,8 @@ Input:
 const EX3_ASSISTANT = JSON.stringify({
   is_bug: true,
   title: "Tooltip is cut off for small screen",
-  environment: "",
+  deployment_environment: "",
+  platform: "",
   preconditions: [],
   steps_to_reproduce: [
     "Decrease the screen",
@@ -261,7 +395,8 @@ Input:
 const EX4_ASSISTANT = JSON.stringify({
   is_bug: false,
   title: "",
-  environment: "mobile",
+  deployment_environment: "",
+  platform: "",
   preconditions: [],
   steps_to_reproduce: [],
   actual_result: "",
@@ -278,7 +413,8 @@ Input:
 const EX5_ASSISTANT = JSON.stringify({
   is_bug: true,
   title: "Search field disappears after Visit Report deleting on Android",
-  environment: "pre-prod, Android",
+  deployment_environment: "dev",
+  platform: "Android",
   preconditions: [
     "Visit Reports list is displayed",
     "Samsung Galaxy A35 is used",
@@ -326,7 +462,8 @@ export async function messageToBugJson(params: {
   const systemContent =
     SYSTEM_PROMPT +
     (extra ? `\n\n## Org-specific QA instructions (from config/openai-bug-examples.json)\n${extra}\n` : "") +
-    backlogReferenceMarkdownBlock() +
+    styleGuideMarkdownBlock() +
+    backlogReferenceMarkdownBlock(intakeRawBacklogMaxChars()) +
     adoConfiguredFieldsPromptBlock();
 
   const backlog = backlogFewShotMessages();
@@ -358,7 +495,10 @@ export async function messageToBugJson(params: {
       messages: [
         {
           role: "system",
-          content: REFINE_SYSTEM_PROMPT + backlogReferenceMarkdownBlock(),
+          content:
+            REFINE_SYSTEM_PROMPT +
+            styleGuideMarkdownBlock() +
+            backlogReferenceMarkdownBlock(refineRawBacklogMaxChars()),
         },
         {
           role: "user",

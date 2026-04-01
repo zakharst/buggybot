@@ -3,6 +3,10 @@ import type {
   FileElement,
   MessageElement,
 } from "@slack/web-api/dist/types/response/ConversationsHistoryResponse";
+import {
+  adoMaxAttachmentBytesPerFile,
+  slackMediaPrefetchTotalBudgetBytes,
+} from "@/lib/slack-ado-media-limits";
 
 function isImageOrVideoSlackFile(f: FileElement): boolean {
   if (f.is_external) return false;
@@ -133,7 +137,8 @@ export async function downloadSlackFileForAdo(
 }
 
 /**
- * Prepare image/video attachments from a Slack message for upload to ADO (deduped, size-capped, count-capped).
+ * Prepare image/video attachments from a Slack message for upload to ADO (deduped, count-capped).
+ * Enforces per-file ADO limit, admin per-file cap, and a total in-RAM budget (serverless-safe).
  */
 export async function collectSlackMessageMediaDownloads(params: {
   slack: WebClient;
@@ -145,11 +150,13 @@ export async function collectSlackMessageMediaDownloads(params: {
   maxFiles: number;
 }): Promise<{ downloads: SlackMediaDownload[]; skipped: string[] }> {
   const skipped: string[] = [];
-  const maxBytes = Math.min(
-    Math.max(params.maxBytesPerFile, 1_000_000),
-    120_000_000,
+  const adoCap = adoMaxAttachmentBytesPerFile();
+  const perFileCap = Math.min(
+    Math.max(params.maxBytesPerFile, 512 * 1024),
+    adoCap,
   );
   const maxFiles = Math.min(Math.max(params.maxFiles, 1), 20);
+  const totalBudget = slackMediaPrefetchTotalBudgetBytes();
 
   const elements = await fetchImageAndVideoFilesForSlackMessage(
     params.slack,
@@ -160,6 +167,7 @@ export async function collectSlackMessageMediaDownloads(params: {
 
   const seen = new Set<string>();
   const downloads: SlackMediaDownload[] = [];
+  let runningTotal = 0;
 
   for (const f of elements) {
     if (downloads.length >= maxFiles) {
@@ -176,19 +184,33 @@ export async function collectSlackMessageMediaDownloads(params: {
       continue;
     }
 
-    const declared = typeof f.size === "number" ? f.size : 0;
-    if (declared > maxBytes) {
+    const remainingBudget = totalBudget - runningTotal;
+    if (remainingBudget < 64 * 1024) {
       skipped.push(
-        `${pickSlackFileName(f)}: ${declared} bytes exceeds limit (${maxBytes})`,
+        `total media budget for this bug exhausted (~${totalBudget} bytes in RAM; see SLACK_MEDIA_MAX_TOTAL_BYTES)`,
+      );
+      break;
+    }
+
+    const thisFileCap = Math.min(perFileCap, remainingBudget);
+    const declared = typeof f.size === "number" ? f.size : 0;
+    if (declared > thisFileCap) {
+      skipped.push(
+        `${pickSlackFileName(f)}: ${declared} bytes exceeds per-file or remaining budget cap (${thisFileCap})`,
       );
       continue;
     }
 
     try {
-      const bytes = await downloadSlackFileForAdo(url, params.botToken, maxBytes);
+      const bytes = await downloadSlackFileForAdo(
+        url,
+        params.botToken,
+        thisFileCap,
+      );
       const fileName = pickSlackFileName(f);
       const contentType =
         (f.mimetype && f.mimetype.trim()) || "application/octet-stream";
+      runningTotal += bytes.byteLength;
       downloads.push({
         fileName,
         contentType,

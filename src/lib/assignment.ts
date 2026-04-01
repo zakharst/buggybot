@@ -3,13 +3,23 @@ import { saveSettings } from "@/lib/settings";
 
 export function pickAssignee(
   settings: SettingsPayload,
+  opts?: { reporterEmail?: string | undefined },
 ): { email: string | undefined; nextIndex: number } {
+  const mode = settings.assignmentMode;
+  if (mode === "none") {
+    return { email: undefined, nextIndex: settings.roundRobinIndex };
+  }
+  if (mode === "reporter") {
+    const email = opts?.reporterEmail?.trim() || undefined;
+    return { email, nextIndex: settings.roundRobinIndex };
+  }
+
   const pool = settings.qaEmails.filter(Boolean);
   if (pool.length === 0) {
     return { email: undefined, nextIndex: settings.roundRobinIndex };
   }
 
-  if (settings.assignmentMode === "random") {
+  if (mode === "random") {
     const idx = Math.floor(Math.random() * pool.length);
     return { email: pool[idx], nextIndex: settings.roundRobinIndex };
   }

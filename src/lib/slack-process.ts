@@ -2,7 +2,6 @@ import { and, eq } from "drizzle-orm";
 import { WebClient } from "@slack/web-api";
 import { getDb } from "@/db";
 import { slackMessageBugs } from "@/db/schema";
-import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import {
   appendSlackSourceToDescriptionHtml,
   attachMediaDownloadsToWorkItem,
@@ -10,8 +9,12 @@ import {
   buildAdoDescriptionWithSlackFallback,
   buildAdoTcmReproStepsHtml,
   buildAdoTcmSystemInfoHtml,
+  buildSlackBugDeploymentMetaHtml,
+  buildSlackMediaEmbedsHtml,
+  buildSlackSourceFooterHtml,
   createAzureBug,
   normalizeSeverityForAdo,
+  patchWorkItemSystemDescription,
 } from "@/lib/azure-devops";
 import {
   buildFailureModalView,
@@ -21,6 +24,7 @@ import {
   type ModalSync,
   type ProgressSteps,
 } from "@/lib/slack-bug-modal";
+import { advanceRoundRobinIfNeeded, pickAssignee } from "@/lib/assignment";
 import { formatError } from "@/lib/errors";
 
 function adoCreateFailureHint(err: unknown): string {
@@ -56,6 +60,24 @@ type ShortcutCtx = {
   threadTs: string;
   messageTs: string;
 };
+
+async function fetchSlackUserEmail(
+  slack: WebClient,
+  userId: string,
+): Promise<string | undefined> {
+  try {
+    const r = await slack.users.info({ user: userId });
+    if (r.ok && r.user?.profile?.email) {
+      return r.user.profile.email;
+    }
+  } catch (e) {
+    await logEvent("warn", "Slack users.info failed (reporter assignee)", {
+      userId,
+      error: formatError(e),
+    });
+  }
+  return undefined;
+}
 
 async function postThreadReply(
   slack: WebClient,
@@ -392,7 +414,10 @@ export async function processCreateAzureBugShortcut(
       if (!parsed.is_bug) {
         const parts = [
           parsed.title.trim(),
-          parsed.environment.trim(),
+          parsed.deployment_environment
+            ? `env=${parsed.deployment_environment}`
+            : "",
+          parsed.platform ? `platform=${parsed.platform}` : "",
           ...parsed.notes.map((n) => n.trim()).filter(Boolean),
         ].filter(Boolean);
         const combined = parts.join(" · ");
@@ -468,13 +493,44 @@ export async function processCreateAzureBugShortcut(
         return;
       }
 
-      const { email: assigneeEmail, nextIndex } = pickAssignee(settings);
       const workItemType = process.env.AZURE_DEVOPS_WORK_ITEM_TYPE;
 
-      const descriptionHtml = appendSlackSourceToDescriptionHtml(
+      const slackMediaOn =
+        settings.slackMediaAttachmentsEnabled &&
+        process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1";
+
+      /**
+       * Pipeline: OpenAI JSON → HTML for Description / TCM tabs; Slack image+video bytes stay in memory
+       * on this request (no temp files). ADO: create work item → upload those bytes as attachments →
+       * patch System.Description = same HTML as create + `<img>` / video links (URLs from ADO).
+       */
+      const slackMediaPrefetchPromise = slackMediaOn
+        ? collectSlackMessageMediaDownloads({
+            slack,
+            botToken,
+            channelId,
+            messageTs,
+            threadTs: ctx.threadTs,
+            maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
+            maxFiles: settings.slackMediaMaxFilesPerBug,
+          }).catch((e) => {
+            void logError("slack media prefetch failed (bug may still be created)", e, {
+              channelId,
+              messageTs,
+            });
+            return {
+              downloads: [],
+              skipped: [formatError(e)],
+            };
+          })
+        : Promise.resolve({ downloads: [], skipped: [] as string[] });
+
+      const descriptionBodyHtml =
+        buildSlackBugDeploymentMetaHtml() +
         buildAdoDescriptionWithSlackFallback(
           {
-            environment: parsed.environment,
+            deployment_environment: parsed.deployment_environment,
+            platform: parsed.platform,
             preconditions: parsed.preconditions,
             stepsToReproduce: parsed.steps_to_reproduce,
             actualResult: parsed.actual_result,
@@ -482,7 +538,10 @@ export async function processCreateAzureBugShortcut(
             notes: parsed.notes,
           },
           messageText,
-        ),
+        );
+
+      const descriptionHtml = appendSlackSourceToDescriptionHtml(
+        descriptionBodyHtml,
         { permalink, channelId, messageTs },
       );
 
@@ -491,7 +550,8 @@ export async function processCreateAzureBugShortcut(
         parsed.actual_result,
       );
       const systemInfoHtml = buildAdoTcmSystemInfoHtml({
-        environment: parsed.environment,
+        deployment_environment: parsed.deployment_environment,
+        platform: parsed.platform,
         preconditions: parsed.preconditions,
         notes: parsed.notes,
       });
@@ -509,21 +569,59 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
+      const appendTags =
+        parsed.deployment_environment === "prod"
+          ? (["Production"] as const)
+          : [];
+
       let created;
+      let slackMediaPrefetch: Awaited<
+        ReturnType<typeof collectSlackMessageMediaDownloads>
+      > = { downloads: [], skipped: [] };
+      let assigneeEmail: string | undefined;
+      let assigneeNextIndex = settings.roundRobinIndex;
       try {
-        created = await createAzureBug({
-          org,
-          project,
-          pat,
-          workItemType: workItemType || undefined,
-          title: workTitle,
-          descriptionHtml,
-          severity: normalizeSeverityForAdo(parsed.severity),
-          assigneeEmail,
-          reproStepsHtml,
-          systemInfoHtml,
-          acceptanceCriteriaHtml,
+        const assigneePickPromise = (async () => {
+          const reporterEmail =
+            settings.assignmentMode === "reporter"
+              ? await fetchSlackUserEmail(slack, payload.user.id)
+              : undefined;
+          if (
+            settings.assignmentMode === "reporter" &&
+            !reporterEmail?.trim()
+          ) {
+            await logEvent("warn", "reporter assignment: no email on Slack profile", {
+              slackUserId: payload.user.id,
+            });
+          }
+          return pickAssignee(settings, { reporterEmail });
+        })();
+
+        const createPromise = assigneePickPromise.then(({ email, nextIndex }) => {
+          assigneeEmail = email;
+          assigneeNextIndex = nextIndex;
+          return createAzureBug({
+            org,
+            project,
+            pat,
+            workItemType: workItemType || undefined,
+            title: workTitle,
+            descriptionHtml,
+            severity: normalizeSeverityForAdo(parsed.severity),
+            assigneeEmail: email,
+            appendTags: [...appendTags],
+            reproStepsHtml,
+            systemInfoHtml,
+            acceptanceCriteriaHtml,
+          });
         });
+
+        const [prefetchResult, workItem] = await Promise.all([
+          slackMediaPrefetchPromise,
+          createPromise,
+        ]);
+        slackMediaPrefetch = prefetchResult;
+        created = workItem;
       } catch (e) {
         const detail = formatError(e).slice(0, 280);
         await showFailure(
@@ -549,23 +647,11 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
-      const slackMediaOn =
-        settings.slackMediaAttachmentsEnabled &&
-        process.env.AZURE_DEVOPS_DISABLE_SLACK_ATTACHMENTS?.trim() !== "1";
-
       let mediaAttached = 0;
       if (slackMediaOn) {
         slackInteractionDiag({ step: "slack_media_attach_started", workItemId: created.id });
         try {
-          const { downloads, skipped } = await collectSlackMessageMediaDownloads({
-            slack,
-            botToken,
-            channelId,
-            messageTs,
-            threadTs: ctx.threadTs,
-            maxBytesPerFile: settings.slackMediaMaxBytesPerFile,
-            maxFiles: settings.slackMediaMaxFilesPerBug,
-          });
+          const { downloads, skipped } = slackMediaPrefetch;
           if (skipped.length) {
             await logEvent("warn", "slack media skipped for ADO", {
               channelId,
@@ -583,6 +669,7 @@ export async function processCreateAzureBugShortcut(
               files: downloads.map((d) => ({
                 fileName: d.fileName,
                 bytes: d.bytes,
+                contentType: d.contentType,
               })),
             });
             mediaAttached = att.attached;
@@ -591,6 +678,30 @@ export async function processCreateAzureBugShortcut(
                 workItemId: created.id,
                 detail: err.slice(0, 600),
               });
+            }
+            const embedHtml = buildSlackMediaEmbedsHtml(att.linked);
+            if (embedHtml) {
+              try {
+                const descriptionWithMedia =
+                  descriptionBodyHtml +
+                  embedHtml +
+                  buildSlackSourceFooterHtml({
+                    permalink,
+                    channelId,
+                    messageTs,
+                  });
+                await patchWorkItemSystemDescription({
+                  org,
+                  project,
+                  pat,
+                  workItemId: created.id,
+                  descriptionHtml: descriptionWithMedia,
+                });
+              } catch (e) {
+                await logError("patch work item description with Slack media failed", e, {
+                  workItemId: created.id,
+                });
+              }
             }
           }
         } catch (e) {
@@ -606,6 +717,11 @@ export async function processCreateAzureBugShortcut(
           mediaAttached,
         });
       }
+
+      await advanceRoundRobinIfNeeded(
+        settings.assignmentMode,
+        assigneeNextIndex,
+      );
 
       await showProgress(
         slack,
@@ -627,8 +743,6 @@ export async function processCreateAzureBugShortcut(
         })
         .where(eq(slackMessageBugs.id, lockRowId));
 
-      await advanceRoundRobinIfNeeded(settings.assignmentMode, nextIndex);
-
       await showSuccess(
         slack,
         modalSync,
@@ -641,7 +755,7 @@ export async function processCreateAzureBugShortcut(
 
       await logEvent("info", "bug created from slack", {
         workItemId: created.id,
-        assignee: assigneeEmail,
+        assignee: assigneeEmail ?? null,
         teamId,
         channelId,
         messageTs,

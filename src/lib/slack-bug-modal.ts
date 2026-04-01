@@ -69,7 +69,7 @@ export function buildSuccessModalView(
 ): ModalView {
   const assign = assignee
     ? escapeMrkdwn(assignee)
-    : "_Unassigned (QA pool empty)_";
+    : "_Unassigned_";
   const safeUrl = escapeMrkdwn(url);
   return {
     type: "modal",

@@ -1,6 +1,7 @@
 import { getRecentLogs } from "@/lib/logger";
 import { getSettings } from "@/lib/settings";
 import { formatError } from "@/lib/errors";
+import { slackMediaPerFileCapMegabytes } from "@/lib/slack-ado-media-limits";
 import { AdminPanel } from "./admin-panel";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +55,7 @@ export default async function AdminPage() {
     <AdminPanel
       settings={settings}
       logs={logs}
+      slackMediaPerFileCapMb={slackMediaPerFileCapMegabytes()}
       slackInteractionsUrl={slackInteractionsUrlFromEnv()}
       envStatus={{
         hasOpenAi: Boolean(process.env.OPENAI_API_KEY),

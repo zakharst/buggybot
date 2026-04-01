@@ -3,10 +3,18 @@ import { z } from "zod";
 /** Default when env/admin do not override. Prefer strong model for bug intake quality. */
 export const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
-export const assignmentModeSchema = z.enum(["round_robin", "random"]);
+export const assignmentModeSchema = z.enum([
+  "round_robin",
+  "random",
+  /** Do not set System.AssignedTo on create. */
+  "none",
+  /** Use the Slack user who ran the shortcut (profile email → ADO identity). */
+  "reporter",
+]);
 export type AssignmentMode = z.infer<typeof assignmentModeSchema>;
 
-const defaultSlackMediaMaxBytes = 25 * 1024 * 1024;
+/** Screenshots + short recordings; under ADO Services 60 MB/file; keeps serverless RAM predictable. */
+const defaultSlackMediaMaxBytes = 12 * 1024 * 1024;
 
 export const settingsPayloadSchema = z.object({
   adoOrg: z.string().optional(),
@@ -20,10 +28,11 @@ export const settingsPayloadSchema = z.object({
   slackMediaMaxBytesPerFile: z
     .number()
     .int()
-    .min(1_000_000)
+    .min(512 * 1024)
+    /** Legacy DB rows may exceed ADO Services 60 MB; {@link getSettings} clamps at runtime. */
     .max(120_000_000)
     .default(defaultSlackMediaMaxBytes),
-  /** Max image/video files attached per bug. */
+  /** Max image/video files attached per bug (ADO allows up to 100 per work item). */
   slackMediaMaxFilesPerBug: z.number().int().min(1).max(20).default(8),
   qaEmails: z.array(z.string().email()).default([]),
   assignmentMode: assignmentModeSchema.default("round_robin"),

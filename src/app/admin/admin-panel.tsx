@@ -41,8 +41,16 @@ export function AdminPanel(props: {
   };
   /** Full Slack Interactivity Request URL, or null if APP_BASE_URL is unset. */
   slackInteractionsUrl: string | null;
+  /** Per-file MB cap (ADO Services = 60; on-prem can raise via env). */
+  slackMediaPerFileCapMb: number;
 }) {
-  const { settings, logs, envStatus, slackInteractionsUrl } = props;
+  const {
+    settings,
+    logs,
+    envStatus,
+    slackInteractionsUrl,
+    slackMediaPerFileCapMb,
+  } = props;
   const [saveState, formAction] = useActionState<
     SaveAdminState,
     FormData
@@ -159,7 +167,17 @@ export function AdminPanel(props: {
           <div className="mt-8 border-t border-[var(--border)] pt-6">
             <h3 className="text-base font-medium">Slack → ADO attachments</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              Images and videos on the Slack message are uploaded to the new
+              Images and videos from the Slack message are downloaded on the
+              server (URLs from{" "}
+              <code className="text-[var(--accent)]">conversations.history</code>{" "}
+              / replies, then{" "}
+              <code className="text-[var(--accent)]">url_private_download</code>
+              ), uploaded to ADO as attachments, then embedded in{" "}
+              <code className="text-[var(--accent)]">System.Description</code>{" "}
+              as <code className="text-[var(--accent)]">&lt;img&gt;</code> / video
+              links. Azure DevOps Services allows{" "}
+              <strong className="text-[var(--text)]">60 MB</strong> per file and{" "}
+              <strong className="text-[var(--text)]">100</strong> attachments per
               work item. Bot scopes:{" "}
               <code className="text-[var(--accent)]">files:read</code>,{" "}
               <code className="text-[var(--accent)]">channels:history</code>,{" "}
@@ -191,10 +209,10 @@ export function AdminPanel(props: {
                   type="number"
                   name="slackMediaMaxMegabytes"
                   min={1}
-                  max={120}
+                  max={slackMediaPerFileCapMb}
                   step={1}
                   defaultValue={Math.min(
-                    120,
+                    slackMediaPerFileCapMb,
                     Math.max(
                       1,
                       Math.round(
@@ -275,6 +293,8 @@ export function AdminPanel(props: {
             >
               <option value="round_robin">Round robin (default)</option>
               <option value="random">Random</option>
+              <option value="none">None (unassigned)</option>
+              <option value="reporter">Assign to reporter (Slack user who ran the shortcut)</option>
             </select>
           </label>
         </section>

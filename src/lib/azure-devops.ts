@@ -4,6 +4,7 @@ import {
   resolvedReproStepsFieldRef,
   resolvedSystemInfoFieldRef,
 } from "@/lib/ado-bug-resolved-refs";
+import { adoMaxAttachmentBytesPerFile } from "@/lib/slack-ado-media-limits";
 
 function basicAuth(pat: string) {
   return Buffer.from(`:${pat}`, "utf8").toString("base64");
@@ -38,6 +39,45 @@ function escapeHtml(s: string) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function escapeHtmlAttr(s: string): string {
+  return s.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+}
+
+/** Layout only — Azure Boards supplies native Segoe/Fluent fonts. */
+const ADO_DESC_BLOCK_STYLE = "white-space:pre-wrap;word-wrap:break-word";
+
+/**
+ * Fixed deployment lines for every Slack-created bug (overridable via env).
+ * Shown before QA body; separate from the model "Platform" (device/OS) line.
+ */
+/** App build/version line from env (AI supplies Environment dev|prod and Platform separately). */
+export function buildSlackBugDeploymentMetaHtml(): string {
+  const build =
+    process.env.SLACK_BUG_APP_BUILD?.trim() || "3.5.0_OTA_2";
+  const text = `Build: ${build}`;
+  return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(text)}</div><hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>`;
+}
+
+function mergeAppendTagsIntoMergedContext(
+  mergedContext: Record<string, unknown>,
+  append: string[],
+): void {
+  if (!append.length) return;
+  const raw = mergedContext["System.Tags"];
+  const existing: string[] =
+    typeof raw === "string"
+      ? raw.split(";").map((t) => t.trim()).filter(Boolean)
+      : [];
+  const seen = new Set(existing.map((t) => t.toLowerCase()));
+  for (const t of append) {
+    const trimmed = t.trim();
+    if (!trimmed || seen.has(trimmed.toLowerCase())) continue;
+    existing.push(trimmed);
+    seen.add(trimmed.toLowerCase());
+  }
+  mergedContext["System.Tags"] = existing.join("; ");
 }
 
 /** Fields this app already sets on create; skipped from env map. */
@@ -129,7 +169,10 @@ export const ADO_DESCRIPTION_EMPTY_MARKER =
  * Omits empty sections; no N/A or placeholders. Slack permalink is appended via {@link appendSlackSourceToDescriptionHtml}.
  */
 export function buildAdoQaBugDescriptionHtml(params: {
-  environment: string;
+  /** Reporter context: `dev` or `prod` only; empty string if unknown. */
+  deployment_environment: string;
+  /** `iOS`, `Android`, or empty when not applicable / unknown. */
+  platform: string;
   preconditions: string[];
   stepsToReproduce: string[];
   actualResult: string;
@@ -138,9 +181,15 @@ export function buildAdoQaBugDescriptionHtml(params: {
 }): string {
   const lines: string[] = [];
 
-  const env = params.environment.trim();
-  if (env) {
-    lines.push(`Env: ${env}`);
+  const dep = params.deployment_environment.trim().toLowerCase();
+  if (dep === "dev" || dep === "prod") {
+    lines.push(`Environment: ${dep}`);
+  }
+
+  const plat = params.platform.trim();
+  if (plat) {
+    if (lines.length) lines.push("");
+    lines.push(`Platform: ${plat}`);
   }
 
   const pre = params.preconditions.map((p) => p.trim()).filter(Boolean);
@@ -183,21 +232,19 @@ export function buildAdoQaBugDescriptionHtml(params: {
     return `<p><i>${escapeHtml(ADO_DESCRIPTION_EMPTY_MARKER)}</i></p>`;
   }
 
-  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
+  return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(text)}</div>`;
 }
 
-/**
- * Appends a footer to System.Description with Slack provenance and a clickable permalink (no separate ADO comment).
- */
-export function appendSlackSourceToDescriptionHtml(
-  descriptionHtml: string,
-  params: { permalink?: string; channelId?: string; messageTs?: string },
-): string {
-  const base = (descriptionHtml || "").trimEnd();
+/** Slack provenance footer (permalink / channel ref). */
+export function buildSlackSourceFooterHtml(params: {
+  permalink?: string;
+  channelId?: string;
+  messageTs?: string;
+}): string {
   const link = params.permalink?.trim();
   const parts = [
     '<hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>',
-    '<p style="font-family:Segoe UI,system-ui,sans-serif;font-size:12px;color:#555">',
+    '<p style="color:#605e5c">',
     "<b>Source:</b> Slack report.",
   ];
   if (link) {
@@ -217,7 +264,18 @@ export function appendSlackSourceToDescriptionHtml(
     }
   }
   parts.push("</p>");
-  return base + parts.join("");
+  return parts.join("");
+}
+
+/**
+ * Appends a footer to System.Description with Slack provenance and a clickable permalink (no separate ADO comment).
+ */
+export function appendSlackSourceToDescriptionHtml(
+  descriptionHtml: string,
+  params: { permalink?: string; channelId?: string; messageTs?: string },
+): string {
+  const base = (descriptionHtml || "").trimEnd();
+  return base + buildSlackSourceFooterHtml(params);
 }
 
 /** Maps AI steps (and optional actual) to the Bug “Repro Steps” tab (HTML). */
@@ -241,13 +299,18 @@ export function buildAdoTcmReproStepsHtml(
 
 /** Maps env / preconditions / notes to the Bug “System Info” tab (HTML). */
 export function buildAdoTcmSystemInfoHtml(params: {
-  environment: string;
+  deployment_environment: string;
+  platform: string;
   preconditions: string[];
   notes: string[];
 }): string {
   const lines: string[] = [];
-  const env = params.environment.trim();
-  if (env) lines.push(`Environment / platform: ${env}`);
+  const dep = params.deployment_environment.trim().toLowerCase();
+  if (dep === "dev" || dep === "prod") {
+    lines.push(`Environment: ${dep}`);
+  }
+  const plat = params.platform.trim();
+  if (plat) lines.push(`Platform: ${plat}`);
   const pre = params.preconditions.map((p) => p.trim()).filter(Boolean);
   if (pre.length) {
     lines.push("Context:");
@@ -260,14 +323,14 @@ export function buildAdoTcmSystemInfoHtml(params: {
   }
   const text = lines.join("\n").trim();
   if (!text) return "";
-  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(text)}</div>`;
+  return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(text)}</div>`;
 }
 
 /** Maps expected result to the “Acceptance Criteria” tab when that field exists on the Bug type (HTML). */
 export function buildAdoAcceptanceCriteriaHtml(expectedResult: string): string {
   const e = expectedResult.trim();
   if (!e) return "";
-  return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(e)}</div>`;
+  return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(e)}</div>`;
 }
 
 /**
@@ -282,7 +345,7 @@ export function buildAdoDescriptionWithSlackFallback(
   const raw = rawSlackMessage.trim();
   if (raw && base.includes(ADO_DESCRIPTION_EMPTY_MARKER)) {
     const clipped = raw.length > 12000 ? `${raw.slice(0, 12000)}…` : raw;
-    return `<div style="white-space:pre-wrap;font-family:Segoe UI,system-ui,sans-serif;font-size:12px">${escapeHtml(clipped)}</div><p><i>(Structured sections were empty; showing original Slack text.)</i></p>`;
+    return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(clipped)}</div><p><i>(Structured sections were empty; showing original Slack text.)</i></p>`;
   }
   return base;
 }
@@ -296,6 +359,8 @@ export async function createAzureBug(params: {
   descriptionHtml: string;
   severity: "low" | "medium" | "high" | "critical";
   assigneeEmail?: string;
+  /** Extra work item tags (merged with `System.Tags` from env). E.g. `Production`. */
+  appendTags?: string[];
   /** Fills Bug layout tabs (Repro Steps / System Info / Acceptance Criteria) when non-empty. */
   reproStepsHtml?: string;
   systemInfoHtml?: string;
@@ -320,6 +385,8 @@ export async function createAzureBug(params: {
   if (!("System.State" in mergedContext)) {
     mergedContext["System.State"] = "New";
   }
+
+  mergeAppendTagsIntoMergedContext(mergedContext, params.appendTags ?? []);
 
   const disableTcmTabs =
     process.env.AZURE_DEVOPS_DISABLE_TCM_TAB_FILL?.trim() === "1";
@@ -393,6 +460,12 @@ export async function uploadAzureDevOpsAttachment(params: {
   fileName: string;
   bytes: Uint8Array;
 }): Promise<{ url: string }> {
+  const cap = adoMaxAttachmentBytesPerFile();
+  if (params.bytes.byteLength > cap) {
+    throw new Error(
+      `File exceeds ADO attachment cap (${params.bytes.byteLength} > ${cap} bytes); raise AZURE_DEVOPS_MAX_ATTACHMENT_BYTES only on DevOps Server with a higher limit.`,
+    );
+  }
   const safe = adoSafeAttachmentFileName(params.fileName);
   const qs = new URLSearchParams({
     fileName: safe,
@@ -425,16 +498,23 @@ export async function uploadAzureDevOpsAttachment(params: {
 
 /**
  * Links uploaded attachment URLs to a work item (screenshots/videos from Slack).
+ * Returns `linked` for embedding images into Description (same URLs as relations).
  */
 export async function attachMediaDownloadsToWorkItem(params: {
   org: string;
   project: string;
   pat: string;
   workItemId: number;
-  files: Array<{ fileName: string; bytes: Uint8Array }>;
-}): Promise<{ attached: number; errors: string[] }> {
+  files: Array<{ fileName: string; bytes: Uint8Array; contentType: string }>;
+}): Promise<{
+  attached: number;
+  errors: string[];
+  linked: Array<{ url: string; fileName: string; contentType: string }>;
+}> {
   const errors: string[] = [];
   const attachmentUrls: string[] = [];
+  const linked: Array<{ url: string; fileName: string; contentType: string }> =
+    [];
 
   for (const f of params.files) {
     try {
@@ -446,6 +526,11 @@ export async function attachMediaDownloadsToWorkItem(params: {
         bytes: f.bytes,
       });
       attachmentUrls.push(url);
+      linked.push({
+        url,
+        fileName: f.fileName,
+        contentType: f.contentType.trim() || "application/octet-stream",
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`${f.fileName}: ${msg}`);
@@ -453,7 +538,7 @@ export async function attachMediaDownloadsToWorkItem(params: {
   }
 
   if (!attachmentUrls.length) {
-    return { attached: 0, errors };
+    return { attached: 0, errors, linked: [] };
   }
 
   const patchUrl = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
@@ -479,10 +564,73 @@ export async function attachMediaDownloadsToWorkItem(params: {
   if (!res.ok) {
     const errText = await res.text();
     errors.push(`link attachments to work item failed ${res.status}: ${errText.slice(0, 500)}`);
-    return { attached: 0, errors };
+    return { attached: 0, errors, linked: [] };
   }
 
-  return { attached: attachmentUrls.length, errors };
+  return { attached: attachmentUrls.length, errors, linked };
+}
+
+/** Inline Slack screenshots (and video links) into HTML Description after attachments exist. */
+export function buildSlackMediaEmbedsHtml(
+  linked: Array<{ url: string; fileName: string; contentType: string }>,
+): string {
+  if (!linked.length) return "";
+  const lower = (ct: string) => ct.toLowerCase();
+  const imgs = linked.filter((x) => lower(x.contentType).startsWith("image/"));
+  const vids = linked.filter((x) => lower(x.contentType).startsWith("video/"));
+  if (!imgs.length && !vids.length) return "";
+
+  const parts = [
+    '<hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>',
+    "<p><b>Screenshots and media (Slack)</b></p>",
+  ];
+  for (const x of imgs) {
+    const src = escapeHtmlAttr(x.url);
+    const alt = escapeHtmlAttr(x.fileName);
+    parts.push(
+      `<p><img src="${src}" alt="${alt}" style="max-width:100%;height:auto" loading="lazy" /></p>`,
+    );
+  }
+  for (const x of vids) {
+    const href = escapeHtmlAttr(x.url);
+    const label = escapeHtml(x.fileName);
+    parts.push(
+      `<p><b>Video:</b> <a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a></p>`,
+    );
+  }
+  return parts.join("");
+}
+
+export async function patchWorkItemSystemDescription(params: {
+  org: string;
+  project: string;
+  pat: string;
+  workItemId: number;
+  descriptionHtml: string;
+}): Promise<void> {
+  const patchUrl = `https://dev.azure.com/${encodeURIComponent(params.org)}/${encodeURIComponent(params.project)}/_apis/wit/workitems/${params.workItemId}?api-version=7.1`;
+
+  const res = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json-patch+json",
+      Authorization: `Basic ${basicAuth(params.pat)}`,
+    },
+    body: JSON.stringify([
+      {
+        op: "replace",
+        path: "/fields/System.Description",
+        value: params.descriptionHtml,
+      },
+    ]),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(
+      `Azure DevOps description update failed ${res.status}: ${errText}`,
+    );
+  }
 }
 
 export async function addWorkItemComment(params: {

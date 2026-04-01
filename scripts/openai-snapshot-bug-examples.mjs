@@ -94,9 +94,11 @@ function buildOutputFromFields(fields) {
   const sysPlain = htmlToText(fields["Microsoft.VSTS.TCM.SystemInfo"] || "");
   const acPlain = htmlToText(fields["Microsoft.VSTS.Common.AcceptanceCriteria"] || "");
 
-  let env = "";
-  const envM = descPlain.match(/(?:^|\n)Env:\s*([^\n]+)/i);
-  if (envM) env = envM[1].trim();
+  let envLine = "";
+  const envM =
+    descPlain.match(/(?:^|\n)Environment:\s*([^\n]+)/i) ||
+    descPlain.match(/(?:^|\n)Env:\s*([^\n]+)/i);
+  if (envM) envLine = envM[1].trim();
 
   const preBlock = extractAfterHeader(descPlain, "Preconditions:");
   let preconditions = parseBullets(preBlock);
@@ -136,9 +138,33 @@ function buildOutputFromFields(fields) {
   const notesBlock = extractAfterHeader(descPlain, "Notes:");
   const notes = parseBullets(notesBlock).slice(0, 15);
 
-  if (!env && sysPlain) {
+  if (!envLine && sysPlain) {
     const sm = sysPlain.match(/Environment[^:]*:\s*([^\n]+)/i);
-    if (sm) env = sm[1].trim();
+    if (sm) envLine = sm[1].trim();
+  }
+
+  const tagsStr = (fields["System.Tags"] || "").toString();
+
+  function inferDeploymentEnv(text, tags) {
+    const t = `${text} ${tags}`.toLowerCase();
+    const isNonProd =
+      /\b(dev|staging|uat|test|pre[-\s]?prod|preprod|internal|qa)\b/.test(t);
+    const isProd =
+      /\b(prod|production|live|прод|бойов|реліз)\b/.test(t) || /^prod\b/.test(t);
+    if (isProd && !isNonProd) return "prod";
+    if (isNonProd) return "dev";
+    const el = (envLine || "").trim().toLowerCase();
+    if (el === "prod" || el === "production") return "prod";
+    if (el === "dev" || el === "staging" || el === "uat" || el === "test")
+      return "dev";
+    return "";
+  }
+
+  function inferPlatform(desc, sys) {
+    const t = `${desc} ${sys || ""}`.toLowerCase();
+    if (/\bios\b|iphone|ipad|ipados/.test(t)) return "iOS";
+    if (/\bandroid\b/.test(t)) return "Android";
+    return "";
   }
 
   const sev = adoSeverityToSimple(fields["Microsoft.VSTS.Common.Severity"]);
@@ -146,7 +172,8 @@ function buildOutputFromFields(fields) {
   return {
     is_bug: true,
     title: title || "Bug",
-    environment: env,
+    deployment_environment: inferDeploymentEnv(descPlain, tagsStr),
+    platform: inferPlatform(descPlain, sysPlain),
     preconditions,
     steps_to_reproduce: steps_to_reproduce.length ? steps_to_reproduce : ["Review the Input and infer minimal repro from the message."],
     actual_result: actual_result || descPlain.slice(0, 500) || "See Input.",
@@ -178,7 +205,7 @@ async function wiqlIds() {
       Authorization: `Basic ${basicAuth(pat)}`,
     },
     body: JSON.stringify({
-      query: `SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] = 'Bug' ORDER BY [ChangedDate] DESC`,
+      query: `SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] = 'Bug' ORDER BY [System.ChangedDate] DESC`,
     }),
   });
   const text = await res.text();
