@@ -20,7 +20,8 @@
     "ado:inspect-bug-layout": "node --env-file=.env scripts/ado-inspect-bug-layout.mjs",
     "openai:snapshot-bug-examples": "node --env-file=.env scripts/openai-snapshot-bug-examples.mjs",
     "ado:snapshot-bug-backlog-md": "node --env-file=.env scripts/ado-snapshot-bug-backlog-md.mjs",
-    "openai:derive-style-from-backlog": "node scripts/openai-derive-style-from-backlog.mjs"
+    "openai:derive-style-from-backlog": "node scripts/openai-derive-style-from-backlog.mjs",
+    "preview:ado": "tsx scripts/preview-ado-sample.ts"
   },
   "dependencies": {
     "@slack/web-api": "^7.8.0",
@@ -43,6 +44,7 @@
     "eslint-config-next": "^15.1.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vitest": "^3.2.4"
   }
