@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { bugIntakeSchema } from "./openai-bug";
+import {
+  bugIntakeSchema,
+  inferAdoEnvironmentTagsFromBugReport,
+  inferAdoEnvironmentTagsFromBugText,
+} from "./openai-bug";
 
 describe("bugIntakeSchema", () => {
   it("normalizes deployment_environment prod vs dev", () => {
@@ -40,5 +44,40 @@ describe("bugIntakeSchema", () => {
       confidence: 0.5,
     });
     expect(r.platform).toBe("iOS");
+  });
+});
+
+describe("inferAdoEnvironmentTagsFromBugText", () => {
+  it("adds Production and Staging when both appear (e.g. Environment line)", () => {
+    expect(
+      inferAdoEnvironmentTagsFromBugText(
+        "Environment: Production & Staging\nSomething broke",
+      ),
+    ).toEqual(["Production", "Staging"]);
+  });
+
+  it("does not treat non-production as Production", () => {
+    expect(inferAdoEnvironmentTagsFromBugText("seen on non-production")).toEqual(
+      [],
+    );
+  });
+
+  it("adds Staging only when mentioned", () => {
+    expect(inferAdoEnvironmentTagsFromBugText("only on staging")).toEqual([
+      "Staging",
+    ]);
+  });
+
+  it("merges Slack message with structured fields via inferAdoEnvironmentTagsFromBugReport", () => {
+    expect(
+      inferAdoEnvironmentTagsFromBugReport("Slack is short", {
+        title: "Bug",
+        preconditions: ["Environment: Production & Staging"],
+        steps_to_reproduce: [],
+        actual_result: "",
+        expected_result: "",
+        notes: [],
+      }),
+    ).toEqual(["Production", "Staging"]);
   });
 });

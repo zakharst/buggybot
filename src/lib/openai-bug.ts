@@ -20,6 +20,28 @@ function normalizeDeploymentEnvironment(raw: string): "" | "dev" | "prod" {
   return "";
 }
 
+/**
+ * ADO work item tags for environment, inferred from reporter text (Slack + structured fields).
+ * Handles phrases like "Environment: Production & Staging" when `deployment_environment`
+ * normalizes to a single bucket (e.g. both mentioned → model often returns `dev`).
+ */
+export function inferAdoEnvironmentTagsFromBugText(raw: string): string[] {
+  const t = raw.trim();
+  if (!t) return [];
+  const tags: string[] = [];
+  const hasProduction =
+    /(?<![-\w])production\b/i.test(raw) ||
+    /\bprod\b/i.test(raw) ||
+    /\b(прод|бойовий|реліз)\b/i.test(raw);
+  if (hasProduction) {
+    tags.push("Production");
+  }
+  if (/\bstaging\b/i.test(raw)) {
+    tags.push("Staging");
+  }
+  return tags;
+}
+
 /** QA-style Azure DevOps bug intake (strict JSON from model; description HTML built in app). */
 export const bugIntakeSchema = z.object({
   is_bug: z.boolean(),
@@ -57,6 +79,30 @@ export const bugIntakeSchema = z.object({
 });
 
 export type BugIntakeResult = z.infer<typeof bugIntakeSchema>;
+
+export function inferAdoEnvironmentTagsFromBugReport(
+  messageText: string,
+  parsed: Pick<
+    BugIntakeResult,
+    | "title"
+    | "preconditions"
+    | "steps_to_reproduce"
+    | "actual_result"
+    | "expected_result"
+    | "notes"
+  >,
+): string[] {
+  const combined = [
+    messageText,
+    parsed.title,
+    ...parsed.preconditions,
+    ...parsed.steps_to_reproduce,
+    parsed.actual_result,
+    parsed.expected_result,
+    ...parsed.notes,
+  ].join("\n");
+  return inferAdoEnvironmentTagsFromBugText(combined);
+}
 
 const SYSTEM_PROMPT = `You are an internal QA bug intake assistant for Azure DevOps.
 

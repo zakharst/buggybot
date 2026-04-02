@@ -45,7 +45,10 @@ function adoCreateFailureHint(err: unknown): string {
   return "\n\nCheck AZURE_DEVOPS_REQUIRED_FIELD_VALUES for required picklist fields (TF401320).";
 }
 import { logError, logEvent } from "@/lib/logger";
-import { messageToBugJson } from "@/lib/openai-bug";
+import {
+  inferAdoEnvironmentTagsFromBugReport,
+  messageToBugJson,
+} from "@/lib/openai-bug";
 import { getSettings } from "@/lib/settings";
 import { collectSlackMessageMediaDownloads } from "@/lib/slack-message-media";
 import {
@@ -643,10 +646,15 @@ export async function processCreateAzureBugShortcut(
         });
       }
 
+      const envTagsFromReport = inferAdoEnvironmentTagsFromBugReport(
+        messageText,
+        parsed,
+      );
       const appendTags =
-        parsed.deployment_environment === "prod"
-          ? (["Production"] as const)
-          : [];
+        parsed.deployment_environment === "prod" &&
+        !envTagsFromReport.some((t) => t.toLowerCase() === "production")
+          ? ["Production", ...envTagsFromReport]
+          : envTagsFromReport;
 
       let created;
       /** Slack→ADO uploads finished before work item create (for inline `<img>` on first save). */
