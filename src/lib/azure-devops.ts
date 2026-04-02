@@ -115,6 +115,9 @@ export function buildSlackBugDeploymentMetaHtml(): string {
   return `<div style="${ADO_DESC_BLOCK_STYLE}">${escapeHtml(text)}</div><hr style="border:none;border-top:1px solid #e0e0e0;margin:1em 0"/>`;
 }
 
+/** Merged into `System.Tags` on every `createAzureBug` call (before caller `appendTags`). */
+const ADO_BUG_ALWAYS_TAGS = ["QualityAssurance"] as const;
+
 function mergeAppendTagsIntoMergedContext(
   mergedContext: Record<string, unknown>,
   append: string[],
@@ -546,7 +549,7 @@ export async function createAzureBug(params: {
   descriptionHtml: string;
   severity: "low" | "medium" | "high" | "critical";
   assigneeEmail?: string;
-  /** Extra work item tags (merged with `System.Tags` from env). E.g. `Production`. */
+  /** Extra work item tags (merged with `System.Tags` from env). **`QualityAssurance` is always added**; e.g. `Production` for prod. */
   appendTags?: string[];
   /** Fills Bug layout tabs (Repro Steps / System Info / Acceptance Criteria) when non-empty. */
   reproStepsHtml?: string;
@@ -652,7 +655,10 @@ export async function createAzureBug(params: {
     mergedContext["System.State"] = "New";
   }
 
-  mergeAppendTagsIntoMergedContext(mergedContext, params.appendTags ?? []);
+  mergeAppendTagsIntoMergedContext(mergedContext, [
+    ...ADO_BUG_ALWAYS_TAGS,
+    ...(params.appendTags ?? []),
+  ]);
 
   const disableTcmTabs =
     process.env.AZURE_DEVOPS_DISABLE_TCM_TAB_FILL?.trim() === "1";
